@@ -196,6 +196,10 @@ class FinestraprinciPale(QMainWindow):
         self.tabs.addTab(self.tab_pianificazione, "Pianificazione")
         self.tabs.addTab(self.tab_statistiche, "Statistiche")
 
+        # Popola le tabelle con i dati caricati
+        self.aggiorna_tabella_addetti()
+        self.aggiorna_tabella_turni()
+
     def crea_tab_addetti(self):
         """Crea il tab per la gestione addetti"""
         widget = QWidget()

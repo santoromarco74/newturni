@@ -20,21 +20,22 @@ import random
 class Addetto:
     """Classe che rappresenta un addetto/dipendente"""
 
-    def __init__(self, nome: str, ore_contratto: int, ore_max: int, straordinario: bool):
+    def __init__(self, nome: str, ore_contratto: int, ore_max_settimanale: int, straordinario: bool):
         """
         Inizializza un addetto
 
         Args:
             nome: Nome dell'addetto
-            ore_contratto: Ore settimanali previste dal contratto
-            ore_max: Numero massimo di ore mensili
+            ore_contratto: Ore settimanali previste dal contratto (MINIMO)
+            ore_max_settimanale: Ore massime settimanali che può lavorare
             straordinario: Se può fare straordinario (True/False)
         """
         self.nome = nome
-        self.ore_contratto = ore_contratto
-        self.ore_max = ore_max
+        self.ore_contratto = ore_contratto  # MINIMO settimanale
+        self.ore_max_settimanale = ore_max_settimanale  # MASSIMO settimanale
         self.straordinario = straordinario
-        self.ore_realizzate = 0
+        # Traccia ore realizzate per settimana: {numero_settimana: ore}
+        self.ore_per_settimana = {}
         self.giorni_riposo = set()  # giorni della settimana (0=lunedì, 6=domenica)
         self.ferie_permessi = []  # lista di date
         self.turni_assegnati = {}  # {data: turno}
@@ -68,14 +69,25 @@ class Addetto:
         if data in self.ferie_permessi:
             return False
 
-        # Controlla se ha raggiunto le ore massime
-        if self.ore_realizzate >= self.ore_max:
-            return False
-
         return True
 
+    def get_ore_settimana(self, numero_settimana: int) -> float:
+        """Restituisce le ore realizzate in una settimana specifica"""
+        return self.ore_per_settimana.get(numero_settimana, 0)
+
+    def add_ore_settimana(self, numero_settimana: int, ore: float):
+        """Aggiunge ore realizzate in una settimana specifica"""
+        if numero_settimana not in self.ore_per_settimana:
+            self.ore_per_settimana[numero_settimana] = 0
+        self.ore_per_settimana[numero_settimana] += ore
+
+    def puo_aggiungere_ore_settimana(self, numero_settimana: int, ore: float) -> bool:
+        """Verifica se può aggiungere altre ore in una settimana senza superare il massimo"""
+        ore_attuali = self.get_ore_settimana(numero_settimana)
+        return (ore_attuali + ore) <= self.ore_max_settimanale
+
     def __repr__(self):
-        return f"Addetto({self.nome}, {self.ore_contratto}h, max {self.ore_max}h)"
+        return f"Addetto({self.nome}, {self.ore_contratto}h min, max {self.ore_max_settimanale}h/settimana)"
 
 
 class Turno:
@@ -153,6 +165,28 @@ class TurnoManager:
 
         return giorni
 
+    def get_settimane_mese(self) -> Dict[int, List[datetime]]:
+        """Restituisce le settimane del mese con i loro giorni"""
+        # Una settimana inizia lunedì (0) e finisce domenica (6)
+        giorni = self.get_giorni_mese()
+        settimane = {}
+        settimana_attuale = None
+
+        for data in giorni:
+            # Numero della settimana ISO (1-53)
+            num_settimana = data.isocalendar()[1]
+
+            if num_settimana not in settimane:
+                settimane[num_settimana] = []
+
+            settimane[num_settimana].append(data)
+
+        return settimane
+
+    def get_numero_settimana(self, data: datetime) -> int:
+        """Restituisce il numero della settimana ISO per una data"""
+        return data.isocalendar()[1]
+
     def aggiungi_addetto(self, addetto: Addetto):
         """Aggiunge un addetto alla lista"""
         if addetto not in self.addetti:
@@ -174,7 +208,9 @@ class TurnoManager:
     def pianifica_turni(self):
         """
         Algoritmo principale di pianificazione dei turni.
-        Assegna i turni cercando di alternare il più possibile
+        Assegna i turni cercando di:
+        - Alternare i turni il più possibile
+        - Rispettare le ore settimanali minime e massime
         """
         giorni = self.get_giorni_mese()
 
@@ -185,30 +221,37 @@ class TurnoManager:
         # Reset dei turni assegnati
         for addetto in self.addetti:
             addetto.turni_assegnati = {}
-            addetto.ore_realizzate = 0
+            addetto.ore_per_settimana = {}
 
         self.pianificazione = {giorno: {} for giorno in giorni}
 
-        # Algoritmo di assegnazione
+        # Algoritmo di assegnazione per ogni giorno
         for data in giorni:
+            num_settimana = self.get_numero_settimana(data)
+
             # Filtra addetti disponibili
             disponibili = [a for a in self.addetti if a.puo_lavorare(data)]
 
             if not disponibili:
                 continue
 
-            # Ordina per criterio: meno ore realizzate, ultimo turno diverso
+            # Ordina per criterio: meno ore nella settimana, ultimo turno diverso
             disponibili.sort(
-                key=lambda a: (a.ore_realizzate, self._get_priorita_turno(a, data))
+                key=lambda a: (
+                    a.get_ore_settimana(num_settimana),
+                    self._get_priorita_turno(a, data)
+                )
             )
 
-            # Assegna turni a rotazione
+            # Assegna turni a rotazione, rispettando il massimo settimanale
             turni_da_assegnare = self._seleziona_turni(disponibili)
 
             for addetto, turno in zip(disponibili, turni_da_assegnare):
-                self.pianificazione[data][addetto.nome] = turno
-                addetto.turni_assegnati[data] = turno
-                addetto.ore_realizzate += turno.ore
+                # Controlla se può aggiungere questo turno senza superare il massimo settimanale
+                if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
+                    self.pianificazione[data][addetto.nome] = turno
+                    addetto.turni_assegnati[data] = turno
+                    addetto.add_ore_settimana(num_settimana, turno.ore)
 
         return True
 
@@ -282,18 +325,20 @@ class TurnoManager:
         """Genera statistiche sulla pianificazione"""
         stats = {
             'ore_totali_per_addetto': {},
+            'ore_per_settimana': {},  # {nome_addetto: {num_settimana: ore}}
             'giorni_lavorati_per_addetto': {},
-            'festivi_lavorati': 0,
             'domeniche_lavorate': 0,
-            'dettaglio_festivi': {},
             'dettaglio_domeniche': {}
         }
 
         for addetto in self.addetti:
-            stats['ore_totali_per_addetto'][addetto.nome] = addetto.ore_realizzate
+            # Calcola ore totali sommando le ore per settimana
+            ore_totali = sum(addetto.ore_per_settimana.values())
+            stats['ore_totali_per_addetto'][addetto.nome] = ore_totali
+            stats['ore_per_settimana'][addetto.nome] = addetto.ore_per_settimana.copy()
             stats['giorni_lavorati_per_addetto'][addetto.nome] = len(addetto.turni_assegnati)
 
-        # Conta festivi e domeniche lavorate
+        # Conta domeniche lavorate
         for data, assegnazioni in self.pianificazione.items():
             if assegnazioni:  # Se ci sono assegnazioni quel giorno
                 if self.is_domenica(data):
@@ -434,8 +479,8 @@ class TurnoManager:
         ws_addetti['A1'].font = Font(bold=True, size=14)
 
         ws_addetti['A3'] = "Nome"
-        ws_addetti['B3'] = "Ore Contratto"
-        ws_addetti['C3'] = "Ore Max"
+        ws_addetti['B3'] = "Ore Contratto (min)"
+        ws_addetti['C3'] = "Ore Max (sett)"
         ws_addetti['D3'] = "Straordinario"
         ws_addetti['E3'] = "Giorni Riposo"
         ws_addetti['F3'] = "Giorni Ferie"
@@ -448,7 +493,7 @@ class TurnoManager:
         for addetto in self.addetti:
             ws_addetti[f'A{row}'] = addetto.nome
             ws_addetti[f'B{row}'] = addetto.ore_contratto
-            ws_addetti[f'C{row}'] = addetto.ore_max
+            ws_addetti[f'C{row}'] = addetto.ore_max_settimanale
             ws_addetti[f'D{row}'] = "Sì" if addetto.straordinario else "No"
 
             giorni_riposo = [self._nome_giorno_italiano(g) for g in sorted(addetto.giorni_riposo)]
@@ -570,13 +615,13 @@ class MenuInterattivo:
             return
 
         try:
-            ore_contratto = int(input("Ore settimanali di contratto: "))
-            ore_max = int(input("Ore massime mensili: "))
+            ore_contratto = int(input("Ore settimanali di contratto (MINIMO): "))
+            ore_max_settimanale = int(input("Ore massime settimanali (MASSIMO): "))
 
             straordinario_input = input("Può fare straordinario? (s/n): ").strip().lower()
             straordinario = straordinario_input == 's'
 
-            addetto = Addetto(nome, ore_contratto, ore_max, straordinario)
+            addetto = Addetto(nome, ore_contratto, ore_max_settimanale, straordinario)
 
             # Menu giorni di riposo
             print("\n--- Seleziona Giorni di Riposo Settimanale ---")
@@ -629,8 +674,8 @@ class MenuInterattivo:
                              for g in sorted(addetto.giorni_riposo)]
 
             print(f"\n{i}. {addetto.nome}")
-            print(f"   Ore Contratto: {addetto.ore_contratto}h/settimana")
-            print(f"   Ore Max: {addetto.ore_max}h/mese")
+            print(f"   Ore Contratto (min): {addetto.ore_contratto}h/settimana")
+            print(f"   Ore Max (sett): {addetto.ore_max_settimanale}h/settimana")
             print(f"   Straordinario: {'Sì' if addetto.straordinario else 'No'}")
             print(f"   Giorni Riposo: {', '.join(giorni_riposo) if giorni_riposo else 'Nessuno'}")
             print(f"   Ferie: {len(addetto.ferie_permessi)} giorni")
@@ -703,9 +748,9 @@ class MenuInterattivo:
 
         elif scelta == '5':
             try:
-                nuove_ore = int(input("Nuove ore massime mensili: "))
-                addetto.ore_max = nuove_ore
-                print("✓ Ore max modificate")
+                nuove_ore = int(input("Nuove ore massime settimanali: "))
+                addetto.ore_max_settimanale = nuove_ore
+                print("✓ Ore max settimanali modificate")
             except ValueError:
                 print("Numero non valido")
 
@@ -869,11 +914,18 @@ class MenuInterattivo:
         print("   STATISTICHE PIANIFICAZIONE".center(60))
         print("="*60)
 
-        print("\n--- ORE TOTALI PER ADDETTO ---")
+        print("\n--- ORE TOTALI PER ADDETTO (mese) ---")
         for nome, ore in sorted(stats['ore_totali_per_addetto'].items()):
+            print(f"{nome:20} {ore:5.0f}h totali nel mese")
+
+        print("\n--- ORE PER SETTIMANA ---")
+        for nome, ore_settimane in sorted(stats['ore_per_settimana'].items()):
             addetto = next(a for a in self.manager.addetti if a.nome == nome)
-            percentuale = (ore / addetto.ore_max * 100) if addetto.ore_max > 0 else 0
-            print(f"{nome:20} {ore:5}h ({percentuale:5.1f}% del massimo)")
+            if ore_settimane:
+                dettagli = ", ".join([f"Sett {s}: {o:.0f}h" for s, o in sorted(ore_settimane.items())])
+                print(f"{nome:20} {dettagli}")
+                media = sum(ore_settimane.values()) / len(ore_settimane)
+                print(f"{'':20} Media settimanale: {media:.1f}h (contratto: {addetto.ore_contratto}h min, max {addetto.ore_max_settimanale}h)")
 
         print("\n--- GIORNI LAVORATI PER ADDETTO ---")
         for nome, giorni in sorted(stats['giorni_lavorati_per_addetto'].items()):

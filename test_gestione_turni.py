@@ -11,7 +11,7 @@ def test_addetto():
     """Test della classe Addetto"""
     print("\n=== TEST CLASSE ADDETTO ===")
 
-    addetto = Addetto("Mario Rossi", 40, 160, True)
+    addetto = Addetto("Mario Rossi", 40, 45, True)
     print(f"✓ Addetto creato: {addetto}")
 
     # Test giorni riposo
@@ -51,8 +51,8 @@ def test_manager():
     print(f"✓ Manager creato per {manager._nome_mese()} {manager.anno}")
 
     # Aggiungi addetti
-    addetto1 = Addetto("Mario Rossi", 40, 160, True)
-    addetto2 = Addetto("Luigi Bianchi", 36, 144, False)
+    addetto1 = Addetto("Mario Rossi", 40, 45, True)
+    addetto2 = Addetto("Luigi Bianchi", 36, 40, False)
 
     manager.aggiungi_addetto(addetto1)
     manager.aggiungi_addetto(addetto2)
@@ -88,6 +88,7 @@ def test_manager():
         print(f"\nStatistiche generate:")
         print(f"  - Ore totali per addetto: {stats['ore_totali_per_addetto']}")
         print(f"  - Giorni lavorati: {stats['giorni_lavorati_per_addetto']}")
+        print(f"  - Ore per settimana: {stats['ore_per_settimana']}")
 
         # Test export Excel
         try:

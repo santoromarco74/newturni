@@ -144,6 +144,31 @@ class TurnoManager:
         self.anno = datetime.now().year
         self.pianificazione = {}  # {data: {addetto: turno}}
 
+    def salva_dati(self, nome_file: str = "dati_turni.json") -> bool:
+        """Salva addetti e turni in un file JSON"""
+        try:
+            from data_manager import DataManager
+            data_manager = DataManager(nome_file)
+            return data_manager.salva_dati(self.addetti, self.turni)
+        except ImportError:
+            print("Errore: modulo data_manager non trovato")
+            return False
+
+    def carica_dati(self, nome_file: str = "dati_turni.json") -> bool:
+        """Carica addetti e turni da un file JSON"""
+        try:
+            from data_manager import DataManager
+            data_manager = DataManager(nome_file)
+
+            if not data_manager.esiste_file_dati():
+                return False
+
+            self.addetti, self.turni = data_manager.carica_dati()
+            return True
+        except ImportError:
+            print("Errore: modulo data_manager non trovato")
+            return False
+
     def is_festivo(self, data: datetime) -> bool:
         """Verifica se una data è festiva"""
         return (data.month, data.day) in self.GIORNI_FESTIVI
@@ -545,6 +570,12 @@ class MenuInterattivo:
         self.manager = TurnoManager()
         self.running = True
 
+        # Carica i dati salvati all'avvio
+        if self.manager.carica_dati():
+            print("\n✓ Dati caricati dal salvataggio precedente")
+        else:
+            print("\n⚠ Nessun salvataggio precedente trovato")
+
     def mostra_menu_principale(self):
         """Mostra il menu principale"""
         print("\n" + "="*60)
@@ -645,6 +676,12 @@ class MenuInterattivo:
 
             # Opzione per aggiungere ferie
             self.aggiungi_ferie_addetto(addetto)
+
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                print("✓ Dati salvati")
+            else:
+                print("⚠ Errore nel salvataggio dei dati")
 
         except ValueError:
             print("Errore: Inserisci valori numerici corretti.")
@@ -777,6 +814,11 @@ class MenuInterattivo:
         if conferma == 's':
             self.manager.rimuovi_addetto(nome)
             print(f"✓ Addetto '{nome}' rimosso.")
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                print("✓ Dati salvati")
+            else:
+                print("⚠ Errore nel salvataggio dei dati")
 
     def menu_turni(self):
         """Menu per gestione turni"""
@@ -824,6 +866,11 @@ class MenuInterattivo:
             turno = Turno(nome, ora_inizio, ora_fine)
             self.manager.aggiungi_turno(turno)
             print(f"\n✓ Turno '{nome}' aggiunto ({turno.ore}h)")
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                print("✓ Dati salvati")
+            else:
+                print("⚠ Errore nel salvataggio dei dati")
         except ValueError:
             print("Formato orario non valido. Usa HH:MM")
 
@@ -853,6 +900,11 @@ class MenuInterattivo:
         if conferma == 's':
             self.manager.rimuovi_turno(nome)
             print(f"✓ Turno '{nome}' rimosso.")
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                print("✓ Dati salvati")
+            else:
+                print("⚠ Errore nel salvataggio dei dati")
 
     def pianifica_turni(self):
         """Avvia l'algoritmo di pianificazione"""

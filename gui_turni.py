@@ -175,6 +175,12 @@ class FinestraprinciPale(QMainWindow):
 
         self.manager = TurnoManager()
 
+        # Carica i dati salvati
+        if self.manager.carica_dati():
+            print("✓ Dati caricati dal salvataggio precedente")
+        else:
+            print("⚠ Nessun salvataggio precedente trovato")
+
         # Crea il widget centrale con tab
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -337,7 +343,11 @@ class FinestraprinciPale(QMainWindow):
                     return
 
                 self.manager.aggiungi_addetto(dialog.addetto)
-                QMessageBox.information(self, "Successo", f"Addetto '{dialog.addetto.nome}' aggiunto!")
+                # Salva automaticamente
+                if self.manager.salva_dati():
+                    QMessageBox.information(self, "Successo", f"Addetto '{dialog.addetto.nome}' aggiunto e salvato!")
+                else:
+                    QMessageBox.warning(self, "Avviso", "Addetto aggiunto ma errore nel salvataggio")
                 self.aggiorna_tabella_addetti()
 
     def rimuovi_addetto(self):
@@ -351,6 +361,11 @@ class FinestraprinciPale(QMainWindow):
         risposta = QMessageBox.question(self, "Conferma", f"Rimuovere '{nome}'?")
         if risposta == QMessageBox.StandardButton.Yes:
             self.manager.rimuovi_addetto(nome)
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                QMessageBox.information(self, "Successo", f"Addetto '{nome}' rimosso e salvato!")
+            else:
+                QMessageBox.warning(self, "Avviso", "Addetto rimosso ma errore nel salvataggio")
             self.aggiorna_tabella_addetti()
 
     def aggiorna_tabella_addetti(self):
@@ -386,7 +401,11 @@ class FinestraprinciPale(QMainWindow):
                     return
 
                 self.manager.aggiungi_turno(dialog.turno)
-                QMessageBox.information(self, "Successo", f"Turno '{dialog.turno.nome}' aggiunto!")
+                # Salva automaticamente
+                if self.manager.salva_dati():
+                    QMessageBox.information(self, "Successo", f"Turno '{dialog.turno.nome}' aggiunto e salvato!")
+                else:
+                    QMessageBox.warning(self, "Avviso", "Turno aggiunto ma errore nel salvataggio")
                 self.aggiorna_tabella_turni()
 
     def rimuovi_turno(self):
@@ -400,6 +419,11 @@ class FinestraprinciPale(QMainWindow):
         risposta = QMessageBox.question(self, "Conferma", f"Rimuovere '{nome}'?")
         if risposta == QMessageBox.StandardButton.Yes:
             self.manager.rimuovi_turno(nome)
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                QMessageBox.information(self, "Successo", f"Turno '{nome}' rimosso e salvato!")
+            else:
+                QMessageBox.warning(self, "Avviso", "Turno rimosso ma errore nel salvataggio")
             self.aggiorna_tabella_turni()
 
     def aggiorna_tabella_turni(self):

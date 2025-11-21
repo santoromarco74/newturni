@@ -232,10 +232,9 @@ class TurnoManager:
 
     def pianifica_turni(self):
         """
-        Algoritmo principale di pianificazione dei turni.
-        Assegna i turni cercando di:
-        - Alternare i turni il più possibile
-        - Rispettare le ore settimanali minime e massime
+        Algoritmo di pianificazione dei turni con matrice giorno x addetto.
+        Assegna MASSIMO 1 turno per addetto per giorno.
+        Bilanciamento: assegna ai turni gli addetti con meno ore nella settimana.
         """
         giorni = self.get_giorni_mese()
 
@@ -250,33 +249,45 @@ class TurnoManager:
 
         self.pianificazione = {giorno: {} for giorno in giorni}
 
-        # Algoritmo di assegnazione per ogni giorno
+        # Algoritmo: per ogni giorno, assegna i turni agli addetti
         for data in giorni:
             num_settimana = self.get_numero_settimana(data)
 
-            # Filtra addetti disponibili
+            # Filtra addetti disponibili per questo giorno
             disponibili = [a for a in self.addetti if a.puo_lavorare(data)]
 
             if not disponibili:
                 continue
 
-            # Ordina per criterio: meno ore nella settimana, ultimo turno diverso
-            disponibili.sort(
-                key=lambda a: (
-                    a.get_ore_settimana(num_settimana),
-                    self._get_priorita_turno(a, data)
-                )
-            )
+            # Itera sui turni disponibili
+            for turno in self.turni:
+                # Trova l'addetto disponibile migliore per questo turno
+                # Predilige addetti con meno ore nella settimana
+                migliore_addetto = None
 
-            # Assegna turni a rotazione, rispettando il massimo settimanale
-            turni_da_assegnare = self._seleziona_turni(disponibili)
+                for addetto in disponibili:
+                    # Controlla che l'addetto non abbia già un turno questo giorno
+                    if data in addetto.turni_assegnati:
+                        continue
 
-            for addetto, turno in zip(disponibili, turni_da_assegnare):
-                # Controlla se può aggiungere questo turno senza superare il massimo settimanale
-                if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
-                    self.pianificazione[data][addetto.nome] = turno
-                    addetto.turni_assegnati[data] = turno
-                    addetto.add_ore_settimana(num_settimana, turno.ore)
+                    # Controlla che possa aggiungere le ore senza superare il massimo settimanale
+                    if not addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
+                        continue
+
+                    # Se è il primo candidato valido, o ha meno ore della settimana
+                    if migliore_addetto is None:
+                        migliore_addetto = addetto
+                    else:
+                        ore_migliore = migliore_addetto.get_ore_settimana(num_settimana)
+                        ore_candidato = addetto.get_ore_settimana(num_settimana)
+                        if ore_candidato < ore_migliore:
+                            migliore_addetto = addetto
+
+                # Assegna il turno al migliore addetto trovato
+                if migliore_addetto:
+                    self.pianificazione[data][migliore_addetto.nome] = turno
+                    migliore_addetto.turni_assegnati[data] = turno
+                    migliore_addetto.add_ore_settimana(num_settimana, turno.ore)
 
         return True
 
@@ -391,31 +402,34 @@ class TurnoManager:
         # Crea workbook
         wb = Workbook()
 
-        # --- FOGLIO 1: Pianificazione ---
+        # --- FOGLIO 1: Pianificazione (MATRICE: Giorni × Addetti) ---
         ws_pianificazione = wb.active
         ws_pianificazione.title = "Pianificazione"
 
-        # Intestazione
+        # Titolo
         giorni = self.get_giorni_mese()
         ws_pianificazione['A1'] = f"PIANIFICAZIONE TURNI - {self._nome_mese()} {self.anno}"
         ws_pianificazione['A1'].font = Font(bold=True, size=14)
-        ws_pianificazione.merge_cells('A1:D1')
+        num_col_addetti = len(self.addetti)
+        if num_col_addetti > 0:
+            last_col = chr(65 + num_col_addetti)  # Colonna dopo l'ultimo addetto
+            ws_pianificazione.merge_cells(f'A1:{last_col}1')
 
-        # Intestazioni colonne
-        ws_pianificazione['A3'] = "Data"
-        ws_pianificazione['B3'] = "Giorno"
-        ws_pianificazione['C3'] = "Addetto"
-        ws_pianificazione['D3'] = "Turno (Orario)"
+        # Intestazioni colonne: Data/Giorno + nomi addetti
+        ws_pianificazione['A3'] = "Data / Giorno"
+        ws_pianificazione['A3'].font = Font(bold=True, color="FFFFFF")
+        ws_pianificazione['A3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
 
-        for col in ['A', 'B', 'C', 'D']:
-            ws_pianificazione[f'{col}3'].font = Font(bold=True, color="FFFFFF")
-            ws_pianificazione[f'{col}3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        for col_idx, addetto in enumerate(self.addetti):
+            col_letter = chr(66 + col_idx)  # B, C, D, ...
+            ws_pianificazione[f'{col_letter}3'] = addetto.nome
+            ws_pianificazione[f'{col_letter}3'].font = Font(bold=True, color="FFFFFF")
+            ws_pianificazione[f'{col_letter}3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            ws_pianificazione.column_dimensions[col_letter].width = 20
 
-        # Dati - una riga per ogni assegnazione (addetto + turno)
+        # Dati: una riga per ogni giorno
         row = 4
         for data in giorni:
-            assegnazioni = self.pianificazione.get(data, {})
-
             # Colora festivi e domeniche
             if self.is_festivo(data):
                 colore = "FFCCCC"  # Rosso chiaro
@@ -424,37 +438,30 @@ class TurnoManager:
             else:
                 colore = "FFFFFF"  # Bianco
 
-            if assegnazioni:
-                # Una riga per ogni addetto assegnato a quella data
-                for nome_addetto, turno in assegnazioni.items():
-                    ws_pianificazione[f'A{row}'] = data.strftime("%d/%m/%Y")
-                    ws_pianificazione[f'B{row}'] = self._nome_giorno_italiano(data.weekday())
-                    ws_pianificazione[f'C{row}'] = nome_addetto
-                    ws_pianificazione[f'D{row}'] = f"{turno.nome} ({turno.ora_inizio}-{turno.ora_fine})"
+            # Data e giorno
+            data_str = f"{data.strftime('%d/%m')} ({self._nome_giorno_italiano(data.weekday())})"
+            ws_pianificazione[f'A{row}'] = data_str
+            ws_pianificazione[f'A{row}'].fill = PatternFill(start_color=colore, end_color=colore, fill_type="solid")
 
-                    # Applica colori
-                    for col in ['A', 'B', 'C', 'D']:
-                        ws_pianificazione[f'{col}{row}'].fill = PatternFill(start_color=colore, end_color=colore, fill_type="solid")
+            # Turni assegnati agli addetti per questo giorno
+            assegnazioni = self.pianificazione.get(data, {})
+            for col_idx, addetto in enumerate(self.addetti):
+                col_letter = chr(66 + col_idx)
 
-                    row += 1
-            else:
-                # Nessun addetto assegnato quel giorno
-                ws_pianificazione[f'A{row}'] = data.strftime("%d/%m/%Y")
-                ws_pianificazione[f'B{row}'] = self._nome_giorno_italiano(data.weekday())
-                ws_pianificazione[f'C{row}'] = "-"
-                ws_pianificazione[f'D{row}'] = "Nessun turno"
+                if addetto.nome in assegnazioni:
+                    turno = assegnazioni[addetto.nome]
+                    turno_str = f"{turno.nome}\n({turno.ora_inizio}-{turno.ora_fine})"
+                else:
+                    turno_str = "-"
 
-                # Applica colori
-                for col in ['A', 'B', 'C', 'D']:
-                    ws_pianificazione[f'{col}{row}'].fill = PatternFill(start_color=colore, end_color=colore, fill_type="solid")
+                ws_pianificazione[f'{col_letter}{row}'] = turno_str
+                ws_pianificazione[f'{col_letter}{row}'].fill = PatternFill(start_color=colore, end_color=colore, fill_type="solid")
+                ws_pianificazione[f'{col_letter}{row}'].alignment = Alignment(wrap_text=True, vertical="center")
 
-                row += 1
+            row += 1
 
-        # Autofit colonne
-        ws_pianificazione.column_dimensions['A'].width = 12
-        ws_pianificazione.column_dimensions['B'].width = 15
-        ws_pianificazione.column_dimensions['C'].width = 18
-        ws_pianificazione.column_dimensions['D'].width = 25
+        # Autofit colonna A
+        ws_pianificazione.column_dimensions['A'].width = 20
 
         # --- FOGLIO 2: Statistiche ---
         ws_stats = wb.create_sheet("Statistiche")

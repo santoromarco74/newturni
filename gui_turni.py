@@ -20,13 +20,22 @@ from PyQt6.QtGui import QColor, QFont
 from gestione_turni import Addetto, Turno, TurnoManager
 
 
+def center_dialog_on_parent(dialog, parent):
+    """Centra un dialog sulla finestra padre"""
+    if parent:
+        parent_geometry = parent.frameGeometry()
+        center_point = parent_geometry.center()
+        dialog.move(center_point.x() - dialog.width() // 2,
+                   center_point.y() - dialog.height() // 2)
+
+
 class DialogAggiungiAddetto(QDialog):
     """Dialog per aggiungere un nuovo addetto"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Aggiungi Addetto")
-        self.setGeometry(100, 100, 400, 400)
+        self.setGeometry(0, 0, 400, 450)  # Geometria per il calcolo della grandezza
         self.addetto = None
 
         layout = QVBoxLayout()
@@ -78,6 +87,9 @@ class DialogAggiungiAddetto(QDialog):
 
         self.setLayout(layout)
 
+        # Centra il dialog sulla finestra padre
+        center_dialog_on_parent(self, self.parent())
+
     def accetta(self):
         """Convalida e accetta il dialog"""
         nome = self.nome_input.text().strip()
@@ -120,7 +132,7 @@ class DialogAggiungiTurno(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Aggiungi Turno")
-        self.setGeometry(100, 100, 300, 200)
+        self.setGeometry(0, 0, 300, 250)
         self.turno = None
 
         layout = QVBoxLayout()
@@ -152,6 +164,9 @@ class DialogAggiungiTurno(QDialog):
 
         self.setLayout(layout)
 
+        # Centra il dialog sulla finestra padre
+        center_dialog_on_parent(self, self.parent())
+
     def accetta(self):
         """Convalida e accetta il dialog"""
         nome = self.nome_input.text().strip()
@@ -169,13 +184,25 @@ class DialogAggiungiTurno(QDialog):
             QMessageBox.warning(self, "Errore di Validazione", str(e))
 
 
-class FinestraprinciPale(QMainWindow):
+class FinestraPrincipale(QMainWindow):
     """Finestra principale dell'applicazione"""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gestione Turni Negozio")
-        self.setGeometry(100, 100, 1000, 700)
+
+        # Calcola dimensioni responsive in base allo schermo
+        try:
+            screen = QApplication.primaryScreen()
+            screen_geometry = screen.availableGeometry()
+            width = int(screen_geometry.width() * 0.85)  # 85% della larghezza schermo
+            height = int(screen_geometry.height() * 0.90)  # 90% dell'altezza schermo
+            x = (screen_geometry.width() - width) // 2   # Centra orizzontalmente
+            y = (screen_geometry.height() - height) // 2 # Centra verticalmente
+            self.setGeometry(x, y, width, height)
+        except:
+            # Fallback a dimensioni fisse se c'è errore
+            self.setGeometry(50, 50, 1200, 800)
 
         self.manager = TurnoManager()
 
@@ -208,6 +235,15 @@ class FinestraprinciPale(QMainWindow):
         """Crea il tab per la gestione addetti"""
         widget = QWidget()
         layout = QVBoxLayout()
+
+        # Barra di ricerca
+        ricerca_layout = QHBoxLayout()
+        ricerca_layout.addWidget(QLabel("Cerca:"))
+        self.ricerca_addetti_input = QLineEdit()
+        self.ricerca_addetti_input.setPlaceholderText("Digita nome addetto...")
+        self.ricerca_addetti_input.textChanged.connect(self.filtra_addetti)
+        ricerca_layout.addWidget(self.ricerca_addetti_input)
+        layout.addLayout(ricerca_layout)
 
         # Tabella addetti
         layout.addWidget(QLabel("Addetti Registrati:"))
@@ -376,11 +412,23 @@ class FinestraprinciPale(QMainWindow):
                 QMessageBox.warning(self, "Avviso", "Addetto rimosso ma errore nel salvataggio")
             self.aggiorna_tabella_addetti()
 
+    def filtra_addetti(self):
+        """Filtra la tabella degli addetti in base al testo cercato"""
+        testo_ricerca = self.ricerca_addetti_input.text().lower()
+
+        for riga in range(self.tabella_addetti.rowCount()):
+            nome_addetto = self.tabella_addetti.item(riga, 0).text()
+            # Mostra la riga se il nome contiene il testo cercato, altrimenti la nasconde
+            self.tabella_addetti.setRowHidden(riga, testo_ricerca not in nome_addetto.lower())
+
     def aggiorna_tabella_addetti(self):
         """Aggiorna la tabella degli addetti"""
         self.tabella_addetti.setRowCount(len(self.manager.addetti))
 
         for i, addetto in enumerate(self.manager.addetti):
+            # Riapplica il filtro se è già stato impostato
+            if hasattr(self, 'ricerca_addetti_input'):
+                self.tabella_addetti.setRowHidden(i, False)  # Mostra tutte le righe inizialmente
             # Nome
             self.tabella_addetti.setItem(i, 0, QTableWidgetItem(addetto.nome))
 
@@ -397,6 +445,10 @@ class FinestraprinciPale(QMainWindow):
             giorni_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
             giorni_riposo = [giorni_nomi[g] for g in sorted(addetto.giorni_riposo)]
             self.tabella_addetti.setItem(i, 4, QTableWidgetItem(", ".join(giorni_riposo) if giorni_riposo else "-"))
+
+        # Riapplica il filtro di ricerca se presente
+        if hasattr(self, 'ricerca_addetti_input'):
+            self.filtra_addetti()
 
     def aggiungi_turno(self):
         """Apre il dialog per aggiungere un turno"""
@@ -447,10 +499,14 @@ class FinestraprinciPale(QMainWindow):
     def aggiorna_mese(self):
         """Aggiorna il mese nel manager"""
         self.manager.mese = self.mese_combo.currentIndex() + 1
+        # Auto-aggiorna statistiche quando cambia il mese
+        self.aggiorna_statistiche()
 
     def aggiorna_anno(self):
         """Aggiorna l'anno nel manager"""
         self.manager.anno = self.anno_spin.value()
+        # Auto-aggiorna statistiche quando cambia l'anno
+        self.aggiorna_statistiche()
 
     def pianifica_turni(self):
         """Avvia la pianificazione dei turni"""
@@ -463,7 +519,22 @@ class FinestraprinciPale(QMainWindow):
             return
 
         if self.manager.pianifica_turni():
-            QMessageBox.information(self, "Successo", "Pianificazione completata!")
+            # Calcola statistiche per il messaggio di successo
+            giorni_pianificati = len([d for d in self.manager.pianificazione if self.manager.pianificazione[d]])
+            giorni_totali = len(self.manager.pianificazione)
+            addetti_con_turni = len(set([nome for d in self.manager.pianificazione for nome in self.manager.pianificazione[d]]))
+
+            messaggio = f"""Pianificazione completata con successo!
+
+✓ Giorni con assegnazioni: {giorni_pianificati}/{giorni_totali}
+✓ Addetti con turni assegnati: {addetti_con_turni}/{len(self.manager.addetti)}
+✓ Mese: {self.manager._nome_mese(self.manager.mese)} {self.manager.anno}"""
+
+            # Salva automaticamente
+            if self.manager.salva_dati():
+                messaggio += "\n✓ Dati salvati"
+
+            QMessageBox.information(self, "Successo", messaggio)
             self.aggiorna_pianificazione()
             self.aggiorna_statistiche()
         else:
@@ -591,7 +662,7 @@ class FinestraprinciPale(QMainWindow):
 def main():
     """Punto di entrata del programma GUI"""
     app = QApplication(sys.argv)
-    finestra = FinestraprinciPale()
+    finestra = FinestraPrincipale()
     finestra.show()
     sys.exit(app.exec())
 

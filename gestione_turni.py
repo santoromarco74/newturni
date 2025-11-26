@@ -6,7 +6,7 @@ Programma per la pianificazione dei turni settimanali/mensili del personale
 Scritto in Python con interfaccia a menu interattivo
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -29,7 +29,30 @@ class Addetto:
             ore_contratto: Ore settimanali previste dal contratto (MINIMO)
             ore_max_settimanale: Ore massime settimanali che può lavorare
             straordinario: Se può fare straordinario (True/False)
+
+        Raises:
+            ValueError: Se i parametri non sono validi
         """
+        # Validazione nome
+        if not nome or not isinstance(nome, str):
+            raise ValueError("Nome deve essere una stringa non vuota")
+
+        # Validazione ore contratto
+        if not isinstance(ore_contratto, (int, float)) or ore_contratto <= 0:
+            raise ValueError("Ore contratto deve essere un numero positivo")
+
+        # Validazione ore massime
+        if not isinstance(ore_max_settimanale, (int, float)) or ore_max_settimanale <= 0:
+            raise ValueError("Ore massime settimanali deve essere un numero positivo")
+
+        # Validazione coerenza ore
+        if ore_contratto > ore_max_settimanale:
+            raise ValueError(f"Ore contratto ({ore_contratto}) non può superare ore massime ({ore_max_settimanale})")
+
+        # Validazione straordinario
+        if not isinstance(straordinario, bool):
+            raise ValueError("Straordinario deve essere True o False")
+
         self.nome = nome
         self.ore_contratto = ore_contratto  # MINIMO settimanale
         self.ore_max_settimanale = ore_max_settimanale  # MASSIMO settimanale
@@ -49,13 +72,19 @@ class Addetto:
         if giorno in self.giorni_riposo:
             self.giorni_riposo.remove(giorno)
 
-    def aggiungi_ferie(self, data: datetime):
+    def aggiungi_ferie(self, data: date):
         """Aggiunge una data di ferie/permesso"""
+        # Ensure data is a date object, not datetime
+        if isinstance(data, datetime):
+            data = data.date()
         if data not in self.ferie_permessi:
             self.ferie_permessi.append(data)
 
-    def rimuovi_ferie(self, data: datetime):
+    def rimuovi_ferie(self, data: date):
         """Rimuove una data di ferie/permesso"""
+        # Ensure data is a date object, not datetime
+        if isinstance(data, datetime):
+            data = data.date()
         if data in self.ferie_permessi:
             self.ferie_permessi.remove(data)
 
@@ -101,11 +130,54 @@ class Turno:
             nome: Nome del turno (es. 'Mattina', 'Pomeriggio')
             ora_inizio: Ora di inizio (formato HH:MM)
             ora_fine: Ora di fine (formato HH:MM)
+
+        Raises:
+            ValueError: Se i parametri non sono validi
         """
+        # Validazione nome
+        if not nome or not isinstance(nome, str):
+            raise ValueError("Nome turno deve essere una stringa non vuota")
+
+        # Validazione formato ore
+        self._valida_orario(ora_inizio, "ora_inizio")
+        self._valida_orario(ora_fine, "ora_fine")
+
         self.nome = nome
         self.ora_inizio = ora_inizio
         self.ora_fine = ora_fine
         self.ore = self._calcola_ore()
+
+    def _valida_orario(self, orario: str, nome_campo: str):
+        """
+        Valida che l'orario sia in formato HH:MM con valori corretti
+
+        Args:
+            orario: Stringa orario da validare
+            nome_campo: Nome del campo per il messaggio di errore
+
+        Raises:
+            ValueError: Se l'orario non è valido
+        """
+        if not isinstance(orario, str):
+            raise ValueError(f"{nome_campo} deve essere una stringa")
+
+        if ':' not in orario:
+            raise ValueError(f"{nome_campo} deve essere in formato HH:MM")
+
+        parti = orario.split(':')
+        if len(parti) != 2:
+            raise ValueError(f"{nome_campo} deve essere in formato HH:MM")
+
+        try:
+            ore, minuti = int(parti[0]), int(parti[1])
+        except ValueError:
+            raise ValueError(f"{nome_campo} deve contenere numeri validi in formato HH:MM")
+
+        if not (0 <= ore <= 23):
+            raise ValueError(f"{nome_campo}: ore deve essere tra 0 e 23")
+
+        if not (0 <= minuti <= 59):
+            raise ValueError(f"{nome_campo}: minuti deve essere tra 0 e 59")
 
     def _calcola_ore(self) -> int:
         """Calcola le ore del turno"""
@@ -145,17 +217,17 @@ class TurnoManager:
         self.pianificazione = {}  # {data: {addetto: turno}}
 
     def salva_dati(self, nome_file: str = "dati_turni.json") -> bool:
-        """Salva addetti e turni in un file JSON"""
+        """Salva addetti, turni e pianificazione in un file JSON"""
         try:
             from data_manager import DataManager
             data_manager = DataManager(nome_file)
-            return data_manager.salva_dati(self.addetti, self.turni)
+            return data_manager.salva_dati(self.addetti, self.turni, self.pianificazione)
         except ImportError:
             print("Errore: modulo data_manager non trovato")
             return False
 
     def carica_dati(self, nome_file: str = "dati_turni.json") -> bool:
-        """Carica addetti e turni da un file JSON"""
+        """Carica addetti, turni e pianificazione da un file JSON"""
         try:
             from data_manager import DataManager
             data_manager = DataManager(nome_file)
@@ -163,7 +235,7 @@ class TurnoManager:
             if not data_manager.esiste_file_dati():
                 return False
 
-            self.addetti, self.turni = data_manager.carica_dati()
+            self.addetti, self.turni, self.pianificazione = data_manager.carica_dati()
             return True
         except ImportError:
             print("Errore: modulo data_manager non trovato")
@@ -234,7 +306,9 @@ class TurnoManager:
         """
         Algoritmo di pianificazione dei turni con matrice giorno x addetto.
         Assegna MASSIMO 1 turno per addetto per giorno.
-        Bilanciamento: assegna ai turni gli addetti con meno ore nella settimana.
+
+        Fase 1: Bilanciamento iniziale - assegna ai turni gli addetti con meno ore nella settimana
+        Fase 2: Verifica ore minime - assicura che ogni addetto raggiunga ore_contratto minime
         """
         giorni = self.get_giorni_mese()
 
@@ -249,7 +323,7 @@ class TurnoManager:
 
         self.pianificazione = {giorno: {} for giorno in giorni}
 
-        # Algoritmo: per ogni giorno, assegna i turni agli addetti
+        # ===== FASE 1: Pianificazione Bilanciata =====
         for data in giorni:
             num_settimana = self.get_numero_settimana(data)
 
@@ -288,6 +362,39 @@ class TurnoManager:
                     self.pianificazione[data][migliore_addetto.nome] = turno
                     migliore_addetto.turni_assegnati[data] = turno
                     migliore_addetto.add_ore_settimana(num_settimana, turno.ore)
+
+        # ===== FASE 2: Verifica e Correzione Ore Minime =====
+        # Calcola ore totali per addetto per garantire minimo contrattato
+        for addetto in self.addetti:
+            ore_totali = sum(addetto.ore_per_settimana.values())
+
+            # Se ha meno ore del minimo contrattato, assegnagli altri turni
+            if ore_totali < addetto.ore_contratto:
+                ore_necessarie = addetto.ore_contratto - ore_totali
+
+                # Trova giorni disponibili dove aggiungere turni
+                for data in giorni:
+                    if ore_necessarie <= 0:
+                        break
+
+                    # Se l'addetto può già lavorare questo giorno e non ha turni
+                    if addetto.puo_lavorare(data) and data not in addetto.turni_assegnati:
+                        num_settimana = self.get_numero_settimana(data)
+
+                        # Trova un turno che può fare senza superare il massimo
+                        for turno in self.turni:
+                            if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
+                                # Assegna il turno
+                                self.pianificazione[data][addetto.nome] = turno
+                                addetto.turni_assegnati[data] = turno
+                                addetto.add_ore_settimana(num_settimana, turno.ore)
+                                ore_necessarie -= turno.ore
+                                break
+
+                # Avvisa se non è stato possibile raggiungere il minimo
+                if ore_necessarie > 0:
+                    print(f"Attenzione: {addetto.nome} non può raggiungere {addetto.ore_contratto}h/settimana. "
+                          f"Assegnate solo {ore_totali + (addetto.ore_contratto - ore_totali - ore_necessarie)}h")
 
         return True
 

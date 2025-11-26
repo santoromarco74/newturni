@@ -26,16 +26,18 @@ class DataManager:
         self.dati = {
             'addetti': [],
             'turni': [],
+            'pianificazione': {},
             'ultimo_aggiornamento': None
         }
 
-    def salva_dati(self, addetti: List[Addetto], turni: List[Turno]) -> bool:
+    def salva_dati(self, addetti: List[Addetto], turni: List[Turno], pianificazione: Dict = None) -> bool:
         """
-        Salva addetti e turni nel file JSON
+        Salva addetti, turni e pianificazione nel file JSON
 
         Args:
             addetti: Lista di addetti
             turni: Lista di turni
+            pianificazione: Dizionario della pianificazione dei turni (opzionale)
 
         Returns:
             True se il salvataggio è riuscito, False altrimenti
@@ -44,6 +46,7 @@ class DataManager:
             dati = {
                 'addetti': self._serializza_addetti(addetti),
                 'turni': self._serializza_turni(turni),
+                'pianificazione': self._serializza_pianificazione(pianificazione) if pianificazione else {},
                 'ultimo_aggiornamento': datetime.now().isoformat()
             }
 
@@ -57,13 +60,13 @@ class DataManager:
 
     def carica_dati(self) -> tuple:
         """
-        Carica addetti e turni dal file JSON
+        Carica addetti, turni e pianificazione dal file JSON
 
         Returns:
-            Tupla (addetti, turni) se il caricamento è riuscito, ([], []) altrimenti
+            Tupla (addetti, turni, pianificazione) se il caricamento è riuscito, ([], [], {}) altrimenti
         """
         if not os.path.exists(self.nome_file):
-            return [], []
+            return [], [], {}
 
         try:
             with open(self.nome_file, 'r', encoding='utf-8') as f:
@@ -71,11 +74,12 @@ class DataManager:
 
             addetti = self._deserializza_addetti(dati.get('addetti', []))
             turni = self._deserializza_turni(dati.get('turni', []))
+            pianificazione = self._deserializza_pianificazione(dati.get('pianificazione', {}), turni)
 
-            return addetti, turni
+            return addetti, turni, pianificazione
         except Exception as e:
             print(f"Errore durante il caricamento: {e}")
-            return [], []
+            return [], [], {}
 
     def _serializza_addetti(self, addetti: List[Addetto]) -> List[Dict[str, Any]]:
         """Serializza gli addetti in formato JSON"""
@@ -155,6 +159,62 @@ class DataManager:
                 risultato.append(turno)
             except Exception as e:
                 print(f"Errore nel caricamento turno: {e}")
+                continue
+
+        return risultato
+
+    def _serializza_pianificazione(self, pianificazione: Dict) -> Dict:
+        """
+        Serializza la pianificazione in formato JSON
+
+        La pianificazione è un dict: {data_datetime: {nome_addetto: Turno}}
+        Converte le date datetime in stringhe ISO e i turni nel loro nome
+        """
+        if not pianificazione:
+            return {}
+
+        risultato = {}
+        for data, assegnazioni in pianificazione.items():
+            # Converte la data datetime in stringa ISO
+            data_str = data.isoformat()
+            assegnazioni_serializzate = {}
+
+            for nome_addetto, turno in assegnazioni.items():
+                # Salva solo il nome del turno (il turno completo può essere recuperato dalla lista turni)
+                assegnazioni_serializzate[nome_addetto] = turno.nome if hasattr(turno, 'nome') else str(turno)
+
+            risultato[data_str] = assegnazioni_serializzate
+
+        return risultato
+
+    def _deserializza_pianificazione(self, dati: Dict, turni: List[Turno]) -> Dict:
+        """
+        Deserializza la pianificazione dal formato JSON
+
+        Converte le stringhe ISO in date datetime e i nomi dei turni negli oggetti Turno
+        """
+        if not dati:
+            return {}
+
+        # Crea un dizionario per cercare rapidamente turni per nome
+        turni_per_nome = {turno.nome: turno for turno in turni}
+
+        risultato = {}
+        for data_str, assegnazioni in dati.items():
+            try:
+                # Converte la stringa ISO in datetime
+                data = datetime.fromisoformat(data_str)
+                assegnazioni_deserializzate = {}
+
+                for nome_addetto, nome_turno in assegnazioni.items():
+                    # Recupera l'oggetto Turno dal dizionario
+                    if nome_turno in turni_per_nome:
+                        assegnazioni_deserializzate[nome_addetto] = turni_per_nome[nome_turno]
+
+                if assegnazioni_deserializzate:
+                    risultato[data] = assegnazioni_deserializzate
+            except (ValueError, KeyError) as e:
+                print(f"Errore nel caricamento pianificazione per {data_str}: {e}")
                 continue
 
         return risultato

@@ -90,8 +90,16 @@ class DialogAggiungiAddetto(QDialog):
             ore_contratto = self.ore_contratto_spin.value()
             ore_max = self.ore_max_spin.value()
 
+            if ore_contratto <= 0:
+                QMessageBox.warning(self, "Errore", "Ore contratto deve essere maggiore di 0")
+                return
+
+            if ore_max <= 0:
+                QMessageBox.warning(self, "Errore", "Ore massime deve essere maggiore di 0")
+                return
+
             if ore_contratto > ore_max:
-                QMessageBox.warning(self, "Errore", "Ore contratto non possono superare ore max")
+                QMessageBox.warning(self, "Errore", "Ore contratto non possono superare ore massime")
                 return
 
             self.addetto = Addetto(nome, ore_contratto, ore_max, self.straordinario_check.isChecked())
@@ -102,8 +110,8 @@ class DialogAggiungiAddetto(QDialog):
                     self.addetto.aggiungi_giorno_riposo(check.property("giorno_idx"))
 
             self.accept()
-        except ValueError:
-            QMessageBox.warning(self, "Errore", "Inserisci valori numerici corretti")
+        except ValueError as e:
+            QMessageBox.warning(self, "Errore di Validazione", str(e))
 
 
 class DialogAggiungiTurno(QDialog):
@@ -155,14 +163,10 @@ class DialogAggiungiTurno(QDialog):
             return
 
         try:
-            # Valida formato HH:MM
-            datetime.strptime(ora_inizio, "%H:%M")
-            datetime.strptime(ora_fine, "%H:%M")
-
             self.turno = Turno(nome, ora_inizio, ora_fine)
             self.accept()
-        except ValueError:
-            QMessageBox.warning(self, "Errore", "Formato orario non valido. Usa HH:MM")
+        except ValueError as e:
+            QMessageBox.warning(self, "Errore di Validazione", str(e))
 
 
 class FinestraprinciPale(QMainWindow):

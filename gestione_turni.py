@@ -215,13 +215,25 @@ class TurnoManager:
         self.mese = datetime.now().month
         self.anno = datetime.now().year
         self.pianificazione = {}  # {data: {addetto: turno}}
+        # Configurazione turni richiesti per tipo di giorno
+        # La chiave è il giorno della settimana (0=lunedì...6=domenica)
+        # Il valore è una lista di nomi di turni da coprire
+        self.turni_richiesti_per_giorno = {
+            0: [],  # Lunedì
+            1: [],  # Martedì
+            2: [],  # Mercoledì
+            3: [],  # Giovedì
+            4: [],  # Venerdì
+            5: [],  # Sabato
+            6: [],  # Domenica
+        }
 
     def salva_dati(self, nome_file: str = "dati_turni.json") -> bool:
         """Salva addetti, turni e pianificazione in un file JSON"""
         try:
             from data_manager import DataManager
             data_manager = DataManager(nome_file)
-            return data_manager.salva_dati(self.addetti, self.turni, self.pianificazione)
+            return data_manager.salva_dati(self.addetti, self.turni, self.pianificazione, self.turni_richiesti_per_giorno)
         except ImportError:
             print("Errore: modulo data_manager non trovato")
             return False
@@ -235,7 +247,7 @@ class TurnoManager:
             if not data_manager.esiste_file_dati():
                 return False
 
-            self.addetti, self.turni, self.pianificazione = data_manager.carica_dati()
+            self.addetti, self.turni, self.pianificazione, self.turni_richiesti_per_giorno = data_manager.carica_dati()
             return True
         except ImportError:
             print("Errore: modulo data_manager non trovato")
@@ -307,7 +319,7 @@ class TurnoManager:
         Algoritmo di pianificazione dei turni con matrice giorno x addetto.
         Assegna MASSIMO 1 turno per addetto per giorno.
 
-        Fase 1: Bilanciamento iniziale - assegna ai turni gli addetti con meno ore nella settimana
+        Fase 1: Pianificazione Bilanciata - assegna i turni richiesti agli addetti con meno ore nella settimana
         Fase 2: Verifica ore minime - assicura che ogni addetto raggiunga ore_contratto minime
         """
         giorni = self.get_giorni_mese()
@@ -326,6 +338,7 @@ class TurnoManager:
         # ===== FASE 1: Pianificazione Bilanciata =====
         for data in giorni:
             num_settimana = self.get_numero_settimana(data)
+            giorno_settimana = data.weekday()  # 0=lunedì, 6=domenica
 
             # Filtra addetti disponibili per questo giorno
             disponibili = [a for a in self.addetti if a.puo_lavorare(data)]
@@ -333,8 +346,18 @@ class TurnoManager:
             if not disponibili:
                 continue
 
-            # Itera sui turni disponibili
-            for turno in self.turni:
+            # Ottieni i turni richiesti per questo giorno della settimana
+            turni_richiesti_nomi = self.turni_richiesti_per_giorno.get(giorno_settimana, [])
+
+            # Se non ci sono turni richiesti configurati, usa tutti i turni disponibili
+            if not turni_richiesti_nomi:
+                turni_da_assegnare = self.turni
+            else:
+                # Filtra solo i turni richiesti
+                turni_da_assegnare = [t for t in self.turni if t.nome in turni_richiesti_nomi]
+
+            # Itera sui turni da assegnare
+            for turno in turni_da_assegnare:
                 # Trova l'addetto disponibile migliore per questo turno
                 # Predilige addetti con meno ore nella settimana
                 migliore_addetto = None

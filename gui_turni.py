@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QTableWidget, QTableWidgetItem, QDialog,
     QLineEdit, QSpinBox, QCheckBox, QComboBox, QDateEdit,
     QMessageBox, QTabWidget, QDateTimeEdit, QListWidget, QListWidgetItem,
-    QHeaderView, QCalendarWidget
+    QHeaderView, QCalendarWidget, QScrollArea
 )
 from PyQt6.QtCore import Qt, QDate, QDateTime
 from PyQt6.QtGui import QColor, QFont
@@ -184,6 +184,85 @@ class DialogAggiungiTurno(QDialog):
             QMessageBox.warning(self, "Errore di Validazione", str(e))
 
 
+class DialogConfiguraTurniRichiesti(QDialog):
+    """Dialog per configurare i turni richiesti per ogni giorno della settimana"""
+
+    def __init__(self, manager: TurnoManager, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configura Turni Richiesti")
+        self.setGeometry(0, 0, 650, 600)
+        self.manager = manager
+
+        # Layout principale del dialog
+        main_layout = QVBoxLayout()
+
+        # Spiegazione
+        info_label = QLabel("Seleziona quali turni devono essere coperti per ogni giorno della settimana:")
+        info_label.setWordWrap(True)
+        main_layout.addWidget(info_label)
+
+        # Crea un widget scrollabile per contenere tutti i giorni
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout()
+
+        # Crea una lista di checkbox per ogni giorno
+        self.giorni_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+        self.turni_checkbox = {}  # {giorno_idx: {nome_turno: checkbox}}
+
+        for giorno_idx, giorno_nome in enumerate(self.giorni_nomi):
+            # Intestazione giorno
+            giorno_label = QLabel(f"\n{giorno_nome}:")
+            giorno_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+            scroll_layout.addWidget(giorno_label)
+
+            # Checkbox per ogni turno disponibile
+            self.turni_checkbox[giorno_idx] = {}
+            for turno in self.manager.turni:
+                checkbox = QCheckBox(f"{turno.nome} ({turno.ora_inizio}-{turno.ora_fine})")
+                # Imposta lo stato del checkbox in base alla configurazione attuale
+                if turno.nome in self.manager.turni_richiesti_per_giorno.get(giorno_idx, []):
+                    checkbox.setChecked(True)
+                self.turni_checkbox[giorno_idx][turno.nome] = checkbox
+                scroll_layout.addWidget(checkbox)
+
+        scroll_layout.addStretch()
+        scroll_widget.setLayout(scroll_layout)
+        scroll_area.setWidget(scroll_widget)
+        main_layout.addWidget(scroll_area)
+
+        # Bottoni
+        btn_layout = QHBoxLayout()
+        btn_ok = QPushButton("Salva")
+        btn_cancel = QPushButton("Annulla")
+        btn_ok.clicked.connect(self.salva_configurazione)
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_ok)
+        btn_layout.addWidget(btn_cancel)
+        main_layout.addLayout(btn_layout)
+
+        self.setLayout(main_layout)
+        center_dialog_on_parent(self, self.parent())
+
+    def salva_configurazione(self):
+        """Salva la configurazione dei turni richiesti"""
+        # Aggiorna la configurazione nel manager
+        for giorno_idx in range(7):
+            turni_selezionati = []
+            for turno_nome, checkbox in self.turni_checkbox[giorno_idx].items():
+                if checkbox.isChecked():
+                    turni_selezionati.append(turno_nome)
+            self.manager.turni_richiesti_per_giorno[giorno_idx] = turni_selezionati
+
+        # Salva i dati
+        if self.manager.salva_dati():
+            QMessageBox.information(self, "Successo", "Configurazione turni richiesti salvata")
+            self.accept()
+        else:
+            QMessageBox.critical(self, "Errore", "Errore durante il salvataggio")
+
+
 class FinestraPrincipale(QMainWindow):
     """Finestra principale dell'applicazione"""
 
@@ -287,10 +366,14 @@ class FinestraPrincipale(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_aggiungi = QPushButton("Aggiungi Turno")
         btn_rimuovi = QPushButton("Rimuovi Turno")
+        btn_configura = QPushButton("Configura Turni Richiesti")
+        btn_configura.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
         btn_aggiungi.clicked.connect(self.aggiungi_turno)
         btn_rimuovi.clicked.connect(self.rimuovi_turno)
+        btn_configura.clicked.connect(self.configura_turni_richiesti)
         btn_layout.addWidget(btn_aggiungi)
         btn_layout.addWidget(btn_rimuovi)
+        btn_layout.addWidget(btn_configura)
         layout.addLayout(btn_layout)
 
         # Impostazioni mese/anno
@@ -468,6 +551,15 @@ class FinestraPrincipale(QMainWindow):
                     QMessageBox.warning(self, "Avviso", "Turno aggiunto ma errore nel salvataggio")
                 self.aggiorna_tabella_turni()
 
+    def configura_turni_richiesti(self):
+        """Apre il dialog per configurare i turni richiesti"""
+        if not self.manager.turni:
+            QMessageBox.warning(self, "Errore", "Aggiungi prima almeno un turno")
+            return
+
+        dialog = DialogConfiguraTurniRichiesti(self.manager, self)
+        dialog.exec()
+
     def rimuovi_turno(self):
         """Rimuove il turno selezionato"""
         riga_selezionata = self.tabella_turni.currentRow()
@@ -528,7 +620,7 @@ class FinestraPrincipale(QMainWindow):
 
 ✓ Giorni con assegnazioni: {giorni_pianificati}/{giorni_totali}
 ✓ Addetti con turni assegnati: {addetti_con_turni}/{len(self.manager.addetti)}
-✓ Mese: {self.manager._nome_mese(self.manager.mese)} {self.manager.anno}"""
+✓ Mese: {self.manager._nome_mese()} {self.manager.anno}"""
 
             # Salva automaticamente
             if self.manager.salva_dati():

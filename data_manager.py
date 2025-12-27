@@ -27,10 +27,11 @@ class DataManager:
             'addetti': [],
             'turni': [],
             'pianificazione': {},
+            'turni_richiesti_per_giorno': {},
             'ultimo_aggiornamento': None
         }
 
-    def salva_dati(self, addetti: List[Addetto], turni: List[Turno], pianificazione: Dict = None) -> bool:
+    def salva_dati(self, addetti: List[Addetto], turni: List[Turno], pianificazione: Dict = None, turni_richiesti_per_giorno: Dict = None) -> bool:
         """
         Salva addetti, turni e pianificazione nel file JSON
 
@@ -38,6 +39,7 @@ class DataManager:
             addetti: Lista di addetti
             turni: Lista di turni
             pianificazione: Dizionario della pianificazione dei turni (opzionale)
+            turni_richiesti_per_giorno: Configurazione dei turni richiesti per giorno (opzionale)
 
         Returns:
             True se il salvataggio è riuscito, False altrimenti
@@ -47,6 +49,7 @@ class DataManager:
                 'addetti': self._serializza_addetti(addetti),
                 'turni': self._serializza_turni(turni),
                 'pianificazione': self._serializza_pianificazione(pianificazione) if pianificazione else {},
+                'turni_richiesti_per_giorno': self._serializza_turni_richiesti(turni_richiesti_per_giorno) if turni_richiesti_per_giorno else {},
                 'ultimo_aggiornamento': datetime.now().isoformat()
             }
 
@@ -63,10 +66,10 @@ class DataManager:
         Carica addetti, turni e pianificazione dal file JSON
 
         Returns:
-            Tupla (addetti, turni, pianificazione) se il caricamento è riuscito, ([], [], {}) altrimenti
+            Tupla (addetti, turni, pianificazione, turni_richiesti_per_giorno) se il caricamento è riuscito, ([], [], {}, {}) altrimenti
         """
         if not os.path.exists(self.nome_file):
-            return [], [], {}
+            return [], [], {}, {}
 
         try:
             with open(self.nome_file, 'r', encoding='utf-8') as f:
@@ -75,11 +78,12 @@ class DataManager:
             addetti = self._deserializza_addetti(dati.get('addetti', []))
             turni = self._deserializza_turni(dati.get('turni', []))
             pianificazione = self._deserializza_pianificazione(dati.get('pianificazione', {}), turni)
+            turni_richiesti_per_giorno = self._deserializza_turni_richiesti(dati.get('turni_richiesti_per_giorno', {}))
 
-            return addetti, turni, pianificazione
+            return addetti, turni, pianificazione, turni_richiesti_per_giorno
         except Exception as e:
             print(f"Errore durante il caricamento: {e}")
-            return [], [], {}
+            return [], [], {}, {}
 
     def _serializza_addetti(self, addetti: List[Addetto]) -> List[Dict[str, Any]]:
         """Serializza gli addetti in formato JSON"""
@@ -232,3 +236,44 @@ class DataManager:
     def esiste_file_dati(self) -> bool:
         """Verifica se esiste il file dei dati"""
         return os.path.exists(self.nome_file)
+
+    def _serializza_turni_richiesti(self, turni_richiesti: Dict[int, List[str]]) -> Dict[str, List[str]]:
+        """
+        Serializza i turni richiesti per giorno in formato JSON
+        Converte le chiavi numeriche in stringhe per compatibilità JSON
+        """
+        if not turni_richiesti:
+            return {}
+
+        return {str(giorno): turni for giorno, turni in turni_richiesti.items()}
+
+    def _deserializza_turni_richiesti(self, dati: Dict[str, List[str]]) -> Dict[int, List[str]]:
+        """
+        Deserializza i turni richiesti per giorno dal formato JSON
+        Converte le chiavi stringhe in numeri interi
+        """
+        if not dati:
+            # Ritorna la struttura di default
+            return {
+                0: [],  # Lunedì
+                1: [],  # Martedì
+                2: [],  # Mercoledì
+                3: [],  # Giovedì
+                4: [],  # Venerdì
+                5: [],  # Sabato
+                6: [],  # Domenica
+            }
+
+        try:
+            return {int(giorno): turni for giorno, turni in dati.items()}
+        except (ValueError, TypeError):
+            # In caso di errore, ritorna la struttura di default
+            return {
+                0: [],  # Lunedì
+                1: [],  # Martedì
+                2: [],  # Mercoledì
+                3: [],  # Giovedì
+                4: [],  # Venerdì
+                5: [],  # Sabato
+                6: [],  # Domenica
+            }

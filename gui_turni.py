@@ -440,14 +440,13 @@ class FinestraPrincipale(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # Area statistiche
+        # Area statistiche scrollabile: con molti addetti il testo supera l'altezza del tab
         self.statistiche_text = QLabel()
         self.statistiche_text.setFont(QFont("Courier", 10))
         self.statistiche_text.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        scroll_area = QWidget()
-        scroll_layout = QVBoxLayout()
-        scroll_layout.addWidget(self.statistiche_text)
-        scroll_area.setLayout(scroll_layout)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.statistiche_text)
 
         layout.addWidget(scroll_area)
 

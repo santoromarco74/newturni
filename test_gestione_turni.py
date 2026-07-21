@@ -102,6 +102,151 @@ def test_manager():
         print("✗ Errore nella pianificazione")
         return False
 
+def test_ferie_rispettate():
+    """La pianificazione non deve assegnare turni nei giorni di ferie"""
+    print("\n=== TEST RISPETTO FERIE ===")
+
+    manager = TurnoManager()
+    manager.mese = 1
+    manager.anno = 2025
+
+    addetto = Addetto("Mario Rossi", 20, 40, False)
+    giorno_ferie = datetime(2025, 1, 15)
+    addetto.aggiungi_ferie(giorno_ferie)
+
+    manager.aggiungi_addetto(addetto)
+    manager.aggiungi_turno(Turno("Mattina", "08:00", "14:00"))
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    assert giorno_ferie not in addetto.turni_assegnati, \
+        f"Turno assegnato il {giorno_ferie.strftime('%d/%m/%Y')} nonostante le ferie"
+    assert addetto.nome not in manager.pianificazione.get(giorno_ferie, {}), \
+        f"{addetto.nome} presente in pianificazione il giorno di ferie"
+
+    # puo_lavorare deve funzionare sia con datetime che con date
+    assert not addetto.puo_lavorare(giorno_ferie), \
+        "puo_lavorare deve restituire False per un datetime in ferie"
+    assert not addetto.puo_lavorare(giorno_ferie.date()), \
+        "puo_lavorare deve restituire False per una date in ferie"
+
+    print("✓ Le ferie vengono rispettate dalla pianificazione")
+    return True
+
+
+def test_ore_minime_settimanali():
+    """Il minimo contrattuale va garantito settimana per settimana"""
+    print("\n=== TEST ORE MINIME SETTIMANALI ===")
+
+    manager = TurnoManager()
+    manager.mese = 1
+    manager.anno = 2025
+
+    # Due addetti e un solo turno da 6h: senza la Fase 2 per settimana,
+    # ognuno riceverebbe circa metà delle ore
+    addetto1 = Addetto("Mario Rossi", 24, 40, False)
+    addetto2 = Addetto("Luigi Bianchi", 24, 40, False)
+    manager.aggiungi_addetto(addetto1)
+    manager.aggiungi_addetto(addetto2)
+    manager.aggiungi_turno(Turno("Mattina", "08:00", "14:00"))
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    for addetto in (addetto1, addetto2):
+        for num_settimana, giorni_settimana in manager.get_settimane_mese().items():
+            if not manager._settimana_completa_nel_mese(giorni_settimana[0]):
+                continue  # settimane a cavallo di due mesi: minimo non esigibile
+            ore = addetto.get_ore_settimana(num_settimana)
+            assert ore >= addetto.ore_contratto, \
+                f"{addetto.nome}: settimana {num_settimana} ha {ore}h, minimo {addetto.ore_contratto}h"
+            assert ore <= addetto.ore_max_settimanale, \
+                f"{addetto.nome}: settimana {num_settimana} ha {ore}h, massimo {addetto.ore_max_settimanale}h"
+
+    print("✓ Minimo e massimo settimanale rispettati per ogni settimana completa")
+    return True
+
+
+def test_copertura_giornata_senza_configurazione():
+    """Nei giorni senza turni richiesti configurati va coperta tutta la giornata,
+    non solo la mattina (scenario reale: domenica con 3 addetti e 9 turni)"""
+    print("\n=== TEST COPERTURA GIORNATA ===")
+
+    manager = TurnoManager()
+    manager.mese = 12
+    manager.anno = 2025
+
+    addetto1 = Addetto("Simona", 38, 45, True)
+    addetto1.aggiungi_giorno_riposo(4)
+    addetto2 = Addetto("Matte", 20, 38, True)
+    addetto2.aggiungi_giorno_riposo(0)
+    addetto3 = Addetto("Melissa", 20, 38, True)
+    addetto3.aggiungi_giorno_riposo(2)
+    for a in (addetto1, addetto2, addetto3):
+        manager.aggiungi_addetto(a)
+
+    # Turni mattina/pomeriggio/intermedi nell'ordine di inserimento reale:
+    # prima del fix la domenica prendeva i primi 3 (tutti di mattina)
+    for nome, inizio, fine in [
+        ("Matt1", "08:00", "14:00"), ("Matt2", "08:00", "13:00"), ("Matt3", "08:00", "14:30"),
+        ("Pom1", "17:00", "21:00"), ("Pom2", "14:30", "21:00"), ("Pom3", "14:00", "21:00"),
+        ("Int1", "14:00", "19:00"), ("Int2", "15:00", "19:00"), ("Int3", "14:00", "18:30"),
+    ]:
+        manager.aggiungi_turno(Turno(nome, inizio, fine))
+
+    # Solo i giorni feriali sono configurati, la domenica no (come nei dati reali)
+    manager.turni_richiesti_per_giorno = {
+        0: ["Matt1", "Pom1"], 1: ["Matt2", "Pom2"], 2: ["Matt1", "Int1"],
+        3: ["Matt3", "Pom3"], 4: ["Matt2", "Pom1"], 5: ["Matt1", "Pom2", "Int2"],
+        6: [],
+    }
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    domeniche_con_turni = 0
+    for data in manager.get_giorni_mese():
+        if data.weekday() != 6:
+            continue
+        assegnazioni = manager.pianificazione.get(data, {})
+        if not assegnazioni:
+            continue
+        domeniche_con_turni += 1
+        inizi = {t.ora_inizio for t in assegnazioni.values()}
+        fini = {t.ora_fine for t in assegnazioni.values()}
+        assert "08:00" in inizi, \
+            f"Domenica {data.strftime('%d/%m')}: nessun turno di apertura (08:00), turni: {sorted(inizi)}"
+        assert "21:00" in fini, \
+            f"Domenica {data.strftime('%d/%m')}: nessun turno di chiusura (21:00), turni assegnati solo fino alle {max(fini)}"
+
+    assert domeniche_con_turni > 0, "Almeno una domenica deve avere turni assegnati"
+
+    print(f"✓ Le {domeniche_con_turni} domeniche pianificate coprono apertura e chiusura")
+    return True
+
+
+def test_festivita():
+    """Le festività nazionali italiane, incluse Pasqua e Pasquetta mobili, sono riconosciute"""
+    print("\n=== TEST FESTIVITÀ ===")
+
+    manager = TurnoManager()
+
+    # Festività a data fissa
+    for mese, giorno in [(1, 1), (1, 6), (4, 25), (5, 1), (6, 2), (8, 15), (11, 1), (12, 8), (12, 25), (12, 26)]:
+        assert manager.is_festivo(datetime(2025, mese, giorno)), f"{giorno}/{mese} deve essere festivo"
+
+    # Pasqua e Pasquetta: mobili, cambiano ogni anno
+    assert TurnoManager.calcola_pasqua(2025) == datetime(2025, 4, 20).date(), "Pasqua 2025 è il 20 aprile"
+    assert TurnoManager.calcola_pasqua(2026) == datetime(2026, 4, 5).date(), "Pasqua 2026 è il 5 aprile"
+    assert manager.is_festivo(datetime(2025, 4, 21)), "Pasquetta 2025 (21/04) deve essere festiva"
+    assert manager.is_festivo(datetime(2026, 4, 6)), "Pasquetta 2026 (06/04) deve essere festiva"
+    assert not manager.is_festivo(datetime(2026, 4, 20)), "Il 20/04/2026 non è festivo (Pasqua non è fissa)"
+
+    # Un giorno feriale qualunque non è festivo
+    assert not manager.is_festivo(datetime(2025, 3, 12)), "Il 12/03 non deve essere festivo"
+
+    print("✓ Festività fisse e mobili riconosciute correttamente")
+    return True
+
+
 def main():
     """Funzione principale di test"""
     print("="*60)
@@ -109,7 +254,9 @@ def main():
     print("="*60)
 
     try:
-        if test_addetto() and test_turno() and test_manager():
+        if (test_addetto() and test_turno() and test_manager()
+                and test_ferie_rispettate() and test_ore_minime_settimanali()
+                and test_festivita() and test_copertura_giornata_senza_configurazione()):
             print("\n" + "="*60)
             print("   TUTTI I TEST COMPLETATI CON SUCCESSO ✓".center(60))
             print("="*60)

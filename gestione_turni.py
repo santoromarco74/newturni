@@ -11,10 +11,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import os
-import json
 import calendar
-from typing import List, Dict, Set, Tuple
-import random
+from typing import List, Dict
 
 
 class Addetto:
@@ -95,7 +93,10 @@ class Addetto:
             return False
 
         # Controlla se è in ferie/permesso
-        if data in self.ferie_permessi:
+        # Le ferie sono salvate come date, mentre la pianificazione usa datetime:
+        # senza normalizzazione il confronto è sempre falso
+        data_confronto = data.date() if isinstance(data, datetime) else data
+        if data_confronto in self.ferie_permessi:
             return False
 
         return True
@@ -200,13 +201,19 @@ class Turno:
 class TurnoManager:
     """Classe principale per la gestione della pianificazione dei turni"""
 
-    # Giorni festivi (non lavorativi)
+    # Giorni festivi nazionali italiani a data fissa (non lavorativi)
+    # Pasqua e Pasquetta sono mobili e vengono calcolate in is_festivo
     GIORNI_FESTIVI = [
-        (1, 1),      # 1 gennaio
-        (4, 20),     # 20 aprile
-        (5, 1),      # 1 maggio
-        (12, 25),    # 25 dicembre
-        (12, 26),    # 26 dicembre
+        (1, 1),      # Capodanno
+        (1, 6),      # Epifania
+        (4, 25),     # Festa della Liberazione
+        (5, 1),      # Festa dei Lavoratori
+        (6, 2),      # Festa della Repubblica
+        (8, 15),     # Ferragosto
+        (11, 1),     # Ognissanti
+        (12, 8),     # Immacolata Concezione
+        (12, 25),    # Natale
+        (12, 26),    # Santo Stefano
     ]
 
     def __init__(self):
@@ -253,9 +260,30 @@ class TurnoManager:
             print("Errore: modulo data_manager non trovato")
             return False
 
+    @staticmethod
+    def calcola_pasqua(anno: int) -> date:
+        """Calcola la data di Pasqua per un anno (algoritmo gregoriano anonimo/Gauss)"""
+        a = anno % 19
+        b, c = divmod(anno, 100)
+        d, e = divmod(b, 4)
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i, k = divmod(c, 4)
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        mese, giorno = divmod(h + l - 7 * m + 114, 31)
+        return date(anno, mese, giorno + 1)
+
     def is_festivo(self, data: datetime) -> bool:
-        """Verifica se una data è festiva"""
-        return (data.month, data.day) in self.GIORNI_FESTIVI
+        """Verifica se una data è festiva (feste nazionali fisse + Pasqua e Pasquetta)"""
+        if (data.month, data.day) in self.GIORNI_FESTIVI:
+            return True
+
+        # Pasqua e Pasquetta (Lunedì dell'Angelo) sono festività mobili
+        giorno = data.date() if isinstance(data, datetime) else data
+        pasqua = self.calcola_pasqua(giorno.year)
+        return giorno == pasqua or giorno == pasqua + timedelta(days=1)
 
     def is_domenica(self, data: datetime) -> bool:
         """Verifica se una data è domenica"""
@@ -350,8 +378,11 @@ class TurnoManager:
             turni_richiesti_nomi = self.turni_richiesti_per_giorno.get(giorno_settimana, [])
 
             # Se non ci sono turni richiesti configurati, usa tutti i turni disponibili
+            # ordinati per coprire l'intera giornata: con più turni che addetti,
+            # l'ordine di inserimento lascerebbe scoperte intere fasce orarie
+            # (es. tutti in mattina e nessuno al pomeriggio)
             if not turni_richiesti_nomi:
-                turni_da_assegnare = self.turni
+                turni_da_assegnare = self._ordina_turni_per_copertura(self.turni)
             else:
                 # Filtra solo i turni richiesti
                 turni_da_assegnare = [t for t in self.turni if t.nome in turni_richiesti_nomi]
@@ -387,25 +418,35 @@ class TurnoManager:
                     migliore_addetto.add_ore_settimana(num_settimana, turno.ore)
 
         # ===== FASE 2: Verifica e Correzione Ore Minime =====
-        # Calcola ore totali per addetto per garantire minimo contrattato
+        # ore_contratto è un minimo SETTIMANALE: il controllo va fatto
+        # settimana per settimana, non sul totale del mese
+        settimane = self.get_settimane_mese()
+        turni_per_copertura = self._ordina_turni_per_copertura(self.turni)
+
         for addetto in self.addetti:
-            ore_totali = sum(addetto.ore_per_settimana.values())
+            for num_settimana, giorni_settimana in settimane.items():
+                ore_settimana = addetto.get_ore_settimana(num_settimana)
 
-            # Se ha meno ore del minimo contrattato, assegnagli altri turni
-            if ore_totali < addetto.ore_contratto:
-                ore_necessarie = addetto.ore_contratto - ore_totali
+                if ore_settimana >= addetto.ore_contratto:
+                    continue
 
-                # Trova giorni disponibili dove aggiungere turni
-                for data in giorni:
+                ore_necessarie = addetto.ore_contratto - ore_settimana
+
+                # Trova giorni disponibili della settimana dove aggiungere turni
+                for data in giorni_settimana:
                     if ore_necessarie <= 0:
                         break
 
-                    # Se l'addetto può già lavorare questo giorno e non ha turni
+                    # Se l'addetto può lavorare questo giorno e non ha già turni
                     if addetto.puo_lavorare(data) and data not in addetto.turni_assegnati:
-                        num_settimana = self.get_numero_settimana(data)
+                        # Preferisce le fasce orarie ancora scoperte quel giorno,
+                        # per non concentrare le ore aggiuntive tutte in mattinata
+                        gia_coperti = {t.nome for t in self.pianificazione[data].values()}
+                        candidati = ([t for t in turni_per_copertura if t.nome not in gia_coperti]
+                                     + [t for t in turni_per_copertura if t.nome in gia_coperti])
 
                         # Trova un turno che può fare senza superare il massimo
-                        for turno in self.turni:
+                        for turno in candidati:
                             if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
                                 # Assegna il turno
                                 self.pianificazione[data][addetto.nome] = turno
@@ -414,78 +455,64 @@ class TurnoManager:
                                 ore_necessarie -= turno.ore
                                 break
 
-                # Avvisa se non è stato possibile raggiungere il minimo
-                if ore_necessarie > 0:
-                    print(f"Attenzione: {addetto.nome} non può raggiungere {addetto.ore_contratto}h/settimana. "
-                          f"Assegnate solo {ore_totali + (addetto.ore_contratto - ore_totali - ore_necessarie)}h")
+                # Avvisa se non è stato possibile raggiungere il minimo,
+                # ma solo per le settimane interamente contenute nel mese
+                # (le settimane a cavallo di due mesi hanno meno giorni disponibili)
+                if ore_necessarie > 0 and self._settimana_completa_nel_mese(giorni_settimana[0]):
+                    print(f"Attenzione: {addetto.nome} non raggiunge il minimo di {addetto.ore_contratto}h "
+                          f"nella settimana {num_settimana}: assegnate {addetto.get_ore_settimana(num_settimana):.0f}h")
 
         return True
 
-    def _get_priorita_turno(self, addetto: Addetto, data: datetime) -> int:
+    def _ordina_turni_per_copertura(self, turni: List[Turno]) -> List[Turno]:
         """
-        Calcola la priorità del turno per evitare turni uguali consecutivi.
-        Restituisce 0 se il turno è diverso da quello della giorno precedente.
-        """
-        data_precedente = data - timedelta(days=1)
-
-        if data_precedente not in addetto.turni_assegnati:
-            return 0
-
-        ultimo_turno = addetto.turni_assegnati[data_precedente]
-
-        # Se ha turni assegnati e l'ultimo è diverso da quelli disponibili, ritorna 0
-        for turno in self.turni:
-            if turno != ultimo_turno:
-                return 0
-
-        return 1
-
-    def _seleziona_turni(self, addetti: List[Addetto]) -> List[Turno]:
-        """
-        Seleziona i turni da assegnare agli addetti disponibili.
-        Tenta di diversificare evitando ripetizioni.
-        """
-        turni_disponibili = self.turni.copy()
-        turni_selezionati = []
-
-        for addetto in addetti:
-            if turni_disponibili:
-                # Preferisce turni diversi da quelli recenti dell'addetto
-                turno = self._scegli_turno_migliore(addetto, turni_disponibili)
-                turni_selezionati.append(turno)
-                turni_disponibili.remove(turno)
-            else:
-                # Se finiscono i turni, ricomincia da capo
-                turni_disponibili = self.turni.copy()
-                if turni_disponibili:
-                    turno = turni_disponibili.pop(0)
-                    turni_selezionati.append(turno)
-
-        return turni_selezionati
-
-    def _scegli_turno_migliore(self, addetto: Addetto, turni: List[Turno]) -> Turno:
-        """
-        Sceglie il turno migliore per un addetto tra quelli disponibili.
-        Preferisce turni diversi dall'ultimo assegnato.
+        Ordina i turni privilegiando la copertura dell'intera giornata:
+        prima un insieme minimo di turni che copre dall'apertura alla chiusura
+        (selezione greedy sugli intervalli orari), poi i rimanenti per ora di inizio.
         """
         if not turni:
-            return self.turni[0]
+            return []
 
-        # Se non ha ultimi turni, sceglie il primo disponibile
-        if not addetto.turni_assegnati:
-            return turni[0]
+        def intervallo(turno: Turno):
+            h_i, m_i = map(int, turno.ora_inizio.split(':'))
+            h_f, m_f = map(int, turno.ora_fine.split(':'))
+            inizio = h_i * 60 + m_i
+            fine = h_f * 60 + m_f
+            if fine < inizio:
+                fine += 24 * 60  # turno oltre la mezzanotte
+            return inizio, fine
 
-        # Prende l'ultimo turno assegnato
-        ultimi_turni = list(addetto.turni_assegnati.values())
-        if ultimi_turni:
-            ultimo_turno = ultimi_turni[-1]
+        rimanenti = sorted(turni, key=lambda t: intervallo(t))
+        fine_giornata = max(intervallo(t)[1] for t in turni)
 
-            # Preferisce un turno diverso dall'ultimo
-            for turno in turni:
-                if turno != ultimo_turno:
-                    return turno
+        copertura = []
+        fine_corrente = intervallo(rimanenti[0])[0]  # apertura
 
-        return turni[0]
+        while rimanenti and fine_corrente < fine_giornata:
+            # Turni che iniziano prima della fine della copertura attuale
+            candidati = [t for t in rimanenti if intervallo(t)[0] <= fine_corrente]
+
+            if not candidati:
+                # Buco orario non copribile: riparte dal prossimo turno disponibile
+                fine_corrente = intervallo(rimanenti[0])[0]
+                continue
+
+            migliore = max(candidati, key=lambda t: intervallo(t)[1])
+            if intervallo(migliore)[1] <= fine_corrente:
+                break  # nessun turno estende la copertura
+
+            copertura.append(migliore)
+            rimanenti.remove(migliore)
+            fine_corrente = intervallo(migliore)[1]
+
+        return copertura + rimanenti
+
+    def _settimana_completa_nel_mese(self, data: datetime) -> bool:
+        """Verifica se la settimana (lun-dom) che contiene la data è interamente nel mese corrente"""
+        lunedi = data - timedelta(days=data.weekday())
+        domenica = lunedi + timedelta(days=6)
+        return (lunedi.month == self.mese and lunedi.year == self.anno
+                and domenica.month == self.mese and domenica.year == self.anno)
 
     def genera_statistiche(self) -> Dict:
         """Genera statistiche sulla pianificazione"""
@@ -542,7 +569,7 @@ class TurnoManager:
         ws_pianificazione['A1'].font = Font(bold=True, size=14)
         num_col_addetti = len(self.addetti)
         if num_col_addetti > 0:
-            last_col = chr(65 + num_col_addetti)  # Colonna dopo l'ultimo addetto
+            last_col = get_column_letter(1 + num_col_addetti)  # Colonna dell'ultimo addetto
             ws_pianificazione.merge_cells(f'A1:{last_col}1')
 
         # Intestazioni colonne: Data/Giorno + nomi addetti
@@ -551,7 +578,7 @@ class TurnoManager:
         ws_pianificazione['A3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
 
         for col_idx, addetto in enumerate(self.addetti):
-            col_letter = chr(66 + col_idx)  # B, C, D, ...
+            col_letter = get_column_letter(2 + col_idx)  # B, C, D, ... anche oltre la Z
             ws_pianificazione[f'{col_letter}3'] = addetto.nome
             ws_pianificazione[f'{col_letter}3'].font = Font(bold=True, color="FFFFFF")
             ws_pianificazione[f'{col_letter}3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -576,7 +603,7 @@ class TurnoManager:
             # Turni assegnati agli addetti per questo giorno
             assegnazioni = self.pianificazione.get(data, {})
             for col_idx, addetto in enumerate(self.addetti):
-                col_letter = chr(66 + col_idx)
+                col_letter = get_column_letter(2 + col_idx)
 
                 if addetto.nome in assegnazioni:
                     turno = assegnazioni[addetto.nome]
@@ -746,6 +773,8 @@ class MenuInterattivo:
                 self.mostra_statistiche()
             elif scelta == '6':
                 self.esporta_excel()
+            elif scelta == '7':
+                self.impostazioni_mese()
             elif scelta == '0':
                 print("\nGrazie per aver utilizzato il programma!")
                 self.running = False
@@ -1066,6 +1095,11 @@ class MenuInterattivo:
         if conferma == 's':
             if self.manager.pianifica_turni():
                 print("\n✓ Pianificazione completata con successo!")
+                # Salva automaticamente come fa la GUI
+                if self.manager.salva_dati():
+                    print("✓ Dati salvati")
+                else:
+                    print("⚠ Errore nel salvataggio dei dati")
             else:
                 print("\n✗ Errore durante la pianificazione.")
 
@@ -1150,8 +1184,8 @@ class MenuInterattivo:
 
         nome_file = input("\nNome file (senza estensione, default: turni_MMMM_AAAA): ").strip()
 
-        if nome_file:
-            nome_file = f"{nome_file}.xlsx"
+        # Con input vuoto passa None, così esporta_excel usa il nome di default
+        nome_file = f"{nome_file}.xlsx" if nome_file else None
 
         try:
             percorso = self.manager.esporta_excel(nome_file)

@@ -95,7 +95,10 @@ class Addetto:
             return False
 
         # Controlla se è in ferie/permesso
-        if data in self.ferie_permessi:
+        # Le ferie sono salvate come date, mentre la pianificazione usa datetime:
+        # senza normalizzazione il confronto è sempre falso
+        data_confronto = data.date() if isinstance(data, datetime) else data
+        if data_confronto in self.ferie_permessi:
             return False
 
         return True
@@ -387,23 +390,26 @@ class TurnoManager:
                     migliore_addetto.add_ore_settimana(num_settimana, turno.ore)
 
         # ===== FASE 2: Verifica e Correzione Ore Minime =====
-        # Calcola ore totali per addetto per garantire minimo contrattato
+        # ore_contratto è un minimo SETTIMANALE: il controllo va fatto
+        # settimana per settimana, non sul totale del mese
+        settimane = self.get_settimane_mese()
+
         for addetto in self.addetti:
-            ore_totali = sum(addetto.ore_per_settimana.values())
+            for num_settimana, giorni_settimana in settimane.items():
+                ore_settimana = addetto.get_ore_settimana(num_settimana)
 
-            # Se ha meno ore del minimo contrattato, assegnagli altri turni
-            if ore_totali < addetto.ore_contratto:
-                ore_necessarie = addetto.ore_contratto - ore_totali
+                if ore_settimana >= addetto.ore_contratto:
+                    continue
 
-                # Trova giorni disponibili dove aggiungere turni
-                for data in giorni:
+                ore_necessarie = addetto.ore_contratto - ore_settimana
+
+                # Trova giorni disponibili della settimana dove aggiungere turni
+                for data in giorni_settimana:
                     if ore_necessarie <= 0:
                         break
 
-                    # Se l'addetto può già lavorare questo giorno e non ha turni
+                    # Se l'addetto può lavorare questo giorno e non ha già turni
                     if addetto.puo_lavorare(data) and data not in addetto.turni_assegnati:
-                        num_settimana = self.get_numero_settimana(data)
-
                         # Trova un turno che può fare senza superare il massimo
                         for turno in self.turni:
                             if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
@@ -414,12 +420,21 @@ class TurnoManager:
                                 ore_necessarie -= turno.ore
                                 break
 
-                # Avvisa se non è stato possibile raggiungere il minimo
-                if ore_necessarie > 0:
-                    print(f"Attenzione: {addetto.nome} non può raggiungere {addetto.ore_contratto}h/settimana. "
-                          f"Assegnate solo {ore_totali + (addetto.ore_contratto - ore_totali - ore_necessarie)}h")
+                # Avvisa se non è stato possibile raggiungere il minimo,
+                # ma solo per le settimane interamente contenute nel mese
+                # (le settimane a cavallo di due mesi hanno meno giorni disponibili)
+                if ore_necessarie > 0 and self._settimana_completa_nel_mese(giorni_settimana[0]):
+                    print(f"Attenzione: {addetto.nome} non raggiunge il minimo di {addetto.ore_contratto}h "
+                          f"nella settimana {num_settimana}: assegnate {addetto.get_ore_settimana(num_settimana):.0f}h")
 
         return True
+
+    def _settimana_completa_nel_mese(self, data: datetime) -> bool:
+        """Verifica se la settimana (lun-dom) che contiene la data è interamente nel mese corrente"""
+        lunedi = data - timedelta(days=data.weekday())
+        domenica = lunedi + timedelta(days=6)
+        return (lunedi.month == self.mese and lunedi.year == self.anno
+                and domenica.month == self.mese and domenica.year == self.anno)
 
     def _get_priorita_turno(self, addetto: Addetto, data: datetime) -> int:
         """
@@ -746,6 +761,8 @@ class MenuInterattivo:
                 self.mostra_statistiche()
             elif scelta == '6':
                 self.esporta_excel()
+            elif scelta == '7':
+                self.impostazioni_mese()
             elif scelta == '0':
                 print("\nGrazie per aver utilizzato il programma!")
                 self.running = False
@@ -1066,6 +1083,11 @@ class MenuInterattivo:
         if conferma == 's':
             if self.manager.pianifica_turni():
                 print("\n✓ Pianificazione completata con successo!")
+                # Salva automaticamente come fa la GUI
+                if self.manager.salva_dati():
+                    print("✓ Dati salvati")
+                else:
+                    print("⚠ Errore nel salvataggio dei dati")
             else:
                 print("\n✗ Errore durante la pianificazione.")
 
@@ -1150,8 +1172,8 @@ class MenuInterattivo:
 
         nome_file = input("\nNome file (senza estensione, default: turni_MMMM_AAAA): ").strip()
 
-        if nome_file:
-            nome_file = f"{nome_file}.xlsx"
+        # Con input vuoto passa None, così esporta_excel usa il nome di default
+        nome_file = f"{nome_file}.xlsx" if nome_file else None
 
         try:
             percorso = self.manager.esporta_excel(nome_file)

@@ -102,6 +102,70 @@ def test_manager():
         print("✗ Errore nella pianificazione")
         return False
 
+def test_ferie_rispettate():
+    """La pianificazione non deve assegnare turni nei giorni di ferie"""
+    print("\n=== TEST RISPETTO FERIE ===")
+
+    manager = TurnoManager()
+    manager.mese = 1
+    manager.anno = 2025
+
+    addetto = Addetto("Mario Rossi", 20, 40, False)
+    giorno_ferie = datetime(2025, 1, 15)
+    addetto.aggiungi_ferie(giorno_ferie)
+
+    manager.aggiungi_addetto(addetto)
+    manager.aggiungi_turno(Turno("Mattina", "08:00", "14:00"))
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    assert giorno_ferie not in addetto.turni_assegnati, \
+        f"Turno assegnato il {giorno_ferie.strftime('%d/%m/%Y')} nonostante le ferie"
+    assert addetto.nome not in manager.pianificazione.get(giorno_ferie, {}), \
+        f"{addetto.nome} presente in pianificazione il giorno di ferie"
+
+    # puo_lavorare deve funzionare sia con datetime che con date
+    assert not addetto.puo_lavorare(giorno_ferie), \
+        "puo_lavorare deve restituire False per un datetime in ferie"
+    assert not addetto.puo_lavorare(giorno_ferie.date()), \
+        "puo_lavorare deve restituire False per una date in ferie"
+
+    print("✓ Le ferie vengono rispettate dalla pianificazione")
+    return True
+
+
+def test_ore_minime_settimanali():
+    """Il minimo contrattuale va garantito settimana per settimana"""
+    print("\n=== TEST ORE MINIME SETTIMANALI ===")
+
+    manager = TurnoManager()
+    manager.mese = 1
+    manager.anno = 2025
+
+    # Due addetti e un solo turno da 6h: senza la Fase 2 per settimana,
+    # ognuno riceverebbe circa metà delle ore
+    addetto1 = Addetto("Mario Rossi", 24, 40, False)
+    addetto2 = Addetto("Luigi Bianchi", 24, 40, False)
+    manager.aggiungi_addetto(addetto1)
+    manager.aggiungi_addetto(addetto2)
+    manager.aggiungi_turno(Turno("Mattina", "08:00", "14:00"))
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    for addetto in (addetto1, addetto2):
+        for num_settimana, giorni_settimana in manager.get_settimane_mese().items():
+            if not manager._settimana_completa_nel_mese(giorni_settimana[0]):
+                continue  # settimane a cavallo di due mesi: minimo non esigibile
+            ore = addetto.get_ore_settimana(num_settimana)
+            assert ore >= addetto.ore_contratto, \
+                f"{addetto.nome}: settimana {num_settimana} ha {ore}h, minimo {addetto.ore_contratto}h"
+            assert ore <= addetto.ore_max_settimanale, \
+                f"{addetto.nome}: settimana {num_settimana} ha {ore}h, massimo {addetto.ore_max_settimanale}h"
+
+    print("✓ Minimo e massimo settimanale rispettati per ogni settimana completa")
+    return True
+
+
 def main():
     """Funzione principale di test"""
     print("="*60)
@@ -109,7 +173,8 @@ def main():
     print("="*60)
 
     try:
-        if test_addetto() and test_turno() and test_manager():
+        if (test_addetto() and test_turno() and test_manager()
+                and test_ferie_rispettate() and test_ore_minime_settimanali()):
             print("\n" + "="*60)
             print("   TUTTI I TEST COMPLETATI CON SUCCESSO ✓".center(60))
             print("="*60)

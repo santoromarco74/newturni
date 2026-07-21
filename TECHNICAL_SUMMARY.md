@@ -190,12 +190,11 @@ newturni/
   - Ferie programmate
 
 ### 3.7 Gestione Festività e Weekend
-- Calendario festività italiane predefinito:
-  - 1 Gennaio (Capodanno)
-  - 20 Aprile (esempio)
-  - 1 Maggio (Festa dei Lavoratori)
-  - 25 Dicembre (Natale)
-  - 26 Dicembre (Santo Stefano)
+- Calendario completo delle festività nazionali italiane:
+  - Feste a data fissa: Capodanno, Epifania, Liberazione (25/4), Festa dei Lavoratori,
+    Festa della Repubblica (2/6), Ferragosto, Ognissanti, Immacolata, Natale, Santo Stefano
+  - Feste mobili: Pasqua e Pasquetta, calcolate automaticamente per ogni anno
+    (algoritmo gregoriano anonimo/Gauss)
 - Riconoscimento automatico domeniche
 - Esclusione festivi dalla pianificazione
 - Evidenziazione visiva in export e GUI
@@ -263,7 +262,8 @@ newturni/
 
 ### Limitazioni Attuali
 - Massimo 1 turno per addetto per giorno
-- Festività hardcoded (non configurabili da GUI)
+- Festività non configurabili da GUI (es. patrono locale) e sempre escluse
+  dalla pianificazione, anche per negozi aperti nei festivi
 - Non gestisce turni su più giorni (es. turno notturno 22-06)
 - Pianificazione non modificabile manualmente dopo generazione
 

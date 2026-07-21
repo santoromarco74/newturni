@@ -11,10 +11,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import os
-import json
 import calendar
-from typing import List, Dict, Set, Tuple
-import random
+from typing import List, Dict
 
 
 class Addetto:
@@ -203,13 +201,19 @@ class Turno:
 class TurnoManager:
     """Classe principale per la gestione della pianificazione dei turni"""
 
-    # Giorni festivi (non lavorativi)
+    # Giorni festivi nazionali italiani a data fissa (non lavorativi)
+    # Pasqua e Pasquetta sono mobili e vengono calcolate in is_festivo
     GIORNI_FESTIVI = [
-        (1, 1),      # 1 gennaio
-        (4, 20),     # 20 aprile
-        (5, 1),      # 1 maggio
-        (12, 25),    # 25 dicembre
-        (12, 26),    # 26 dicembre
+        (1, 1),      # Capodanno
+        (1, 6),      # Epifania
+        (4, 25),     # Festa della Liberazione
+        (5, 1),      # Festa dei Lavoratori
+        (6, 2),      # Festa della Repubblica
+        (8, 15),     # Ferragosto
+        (11, 1),     # Ognissanti
+        (12, 8),     # Immacolata Concezione
+        (12, 25),    # Natale
+        (12, 26),    # Santo Stefano
     ]
 
     def __init__(self):
@@ -256,9 +260,30 @@ class TurnoManager:
             print("Errore: modulo data_manager non trovato")
             return False
 
+    @staticmethod
+    def calcola_pasqua(anno: int) -> date:
+        """Calcola la data di Pasqua per un anno (algoritmo gregoriano anonimo/Gauss)"""
+        a = anno % 19
+        b, c = divmod(anno, 100)
+        d, e = divmod(b, 4)
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i, k = divmod(c, 4)
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        mese, giorno = divmod(h + l - 7 * m + 114, 31)
+        return date(anno, mese, giorno + 1)
+
     def is_festivo(self, data: datetime) -> bool:
-        """Verifica se una data è festiva"""
-        return (data.month, data.day) in self.GIORNI_FESTIVI
+        """Verifica se una data è festiva (feste nazionali fisse + Pasqua e Pasquetta)"""
+        if (data.month, data.day) in self.GIORNI_FESTIVI:
+            return True
+
+        # Pasqua e Pasquetta (Lunedì dell'Angelo) sono festività mobili
+        giorno = data.date() if isinstance(data, datetime) else data
+        pasqua = self.calcola_pasqua(giorno.year)
+        return giorno == pasqua or giorno == pasqua + timedelta(days=1)
 
     def is_domenica(self, data: datetime) -> bool:
         """Verifica se una data è domenica"""
@@ -436,72 +461,6 @@ class TurnoManager:
         return (lunedi.month == self.mese and lunedi.year == self.anno
                 and domenica.month == self.mese and domenica.year == self.anno)
 
-    def _get_priorita_turno(self, addetto: Addetto, data: datetime) -> int:
-        """
-        Calcola la priorità del turno per evitare turni uguali consecutivi.
-        Restituisce 0 se il turno è diverso da quello della giorno precedente.
-        """
-        data_precedente = data - timedelta(days=1)
-
-        if data_precedente not in addetto.turni_assegnati:
-            return 0
-
-        ultimo_turno = addetto.turni_assegnati[data_precedente]
-
-        # Se ha turni assegnati e l'ultimo è diverso da quelli disponibili, ritorna 0
-        for turno in self.turni:
-            if turno != ultimo_turno:
-                return 0
-
-        return 1
-
-    def _seleziona_turni(self, addetti: List[Addetto]) -> List[Turno]:
-        """
-        Seleziona i turni da assegnare agli addetti disponibili.
-        Tenta di diversificare evitando ripetizioni.
-        """
-        turni_disponibili = self.turni.copy()
-        turni_selezionati = []
-
-        for addetto in addetti:
-            if turni_disponibili:
-                # Preferisce turni diversi da quelli recenti dell'addetto
-                turno = self._scegli_turno_migliore(addetto, turni_disponibili)
-                turni_selezionati.append(turno)
-                turni_disponibili.remove(turno)
-            else:
-                # Se finiscono i turni, ricomincia da capo
-                turni_disponibili = self.turni.copy()
-                if turni_disponibili:
-                    turno = turni_disponibili.pop(0)
-                    turni_selezionati.append(turno)
-
-        return turni_selezionati
-
-    def _scegli_turno_migliore(self, addetto: Addetto, turni: List[Turno]) -> Turno:
-        """
-        Sceglie il turno migliore per un addetto tra quelli disponibili.
-        Preferisce turni diversi dall'ultimo assegnato.
-        """
-        if not turni:
-            return self.turni[0]
-
-        # Se non ha ultimi turni, sceglie il primo disponibile
-        if not addetto.turni_assegnati:
-            return turni[0]
-
-        # Prende l'ultimo turno assegnato
-        ultimi_turni = list(addetto.turni_assegnati.values())
-        if ultimi_turni:
-            ultimo_turno = ultimi_turni[-1]
-
-            # Preferisce un turno diverso dall'ultimo
-            for turno in turni:
-                if turno != ultimo_turno:
-                    return turno
-
-        return turni[0]
-
     def genera_statistiche(self) -> Dict:
         """Genera statistiche sulla pianificazione"""
         stats = {
@@ -557,7 +516,7 @@ class TurnoManager:
         ws_pianificazione['A1'].font = Font(bold=True, size=14)
         num_col_addetti = len(self.addetti)
         if num_col_addetti > 0:
-            last_col = chr(65 + num_col_addetti)  # Colonna dopo l'ultimo addetto
+            last_col = get_column_letter(1 + num_col_addetti)  # Colonna dell'ultimo addetto
             ws_pianificazione.merge_cells(f'A1:{last_col}1')
 
         # Intestazioni colonne: Data/Giorno + nomi addetti
@@ -566,7 +525,7 @@ class TurnoManager:
         ws_pianificazione['A3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
 
         for col_idx, addetto in enumerate(self.addetti):
-            col_letter = chr(66 + col_idx)  # B, C, D, ...
+            col_letter = get_column_letter(2 + col_idx)  # B, C, D, ... anche oltre la Z
             ws_pianificazione[f'{col_letter}3'] = addetto.nome
             ws_pianificazione[f'{col_letter}3'].font = Font(bold=True, color="FFFFFF")
             ws_pianificazione[f'{col_letter}3'].fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -591,7 +550,7 @@ class TurnoManager:
             # Turni assegnati agli addetti per questo giorno
             assegnazioni = self.pianificazione.get(data, {})
             for col_idx, addetto in enumerate(self.addetti):
-                col_letter = chr(66 + col_idx)
+                col_letter = get_column_letter(2 + col_idx)
 
                 if addetto.nome in assegnazioni:
                     turno = assegnazioni[addetto.nome]

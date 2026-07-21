@@ -166,6 +166,30 @@ def test_ore_minime_settimanali():
     return True
 
 
+def test_festivita():
+    """Le festività nazionali italiane, incluse Pasqua e Pasquetta mobili, sono riconosciute"""
+    print("\n=== TEST FESTIVITÀ ===")
+
+    manager = TurnoManager()
+
+    # Festività a data fissa
+    for mese, giorno in [(1, 1), (1, 6), (4, 25), (5, 1), (6, 2), (8, 15), (11, 1), (12, 8), (12, 25), (12, 26)]:
+        assert manager.is_festivo(datetime(2025, mese, giorno)), f"{giorno}/{mese} deve essere festivo"
+
+    # Pasqua e Pasquetta: mobili, cambiano ogni anno
+    assert TurnoManager.calcola_pasqua(2025) == datetime(2025, 4, 20).date(), "Pasqua 2025 è il 20 aprile"
+    assert TurnoManager.calcola_pasqua(2026) == datetime(2026, 4, 5).date(), "Pasqua 2026 è il 5 aprile"
+    assert manager.is_festivo(datetime(2025, 4, 21)), "Pasquetta 2025 (21/04) deve essere festiva"
+    assert manager.is_festivo(datetime(2026, 4, 6)), "Pasquetta 2026 (06/04) deve essere festiva"
+    assert not manager.is_festivo(datetime(2026, 4, 20)), "Il 20/04/2026 non è festivo (Pasqua non è fissa)"
+
+    # Un giorno feriale qualunque non è festivo
+    assert not manager.is_festivo(datetime(2025, 3, 12)), "Il 12/03 non deve essere festivo"
+
+    print("✓ Festività fisse e mobili riconosciute correttamente")
+    return True
+
+
 def main():
     """Funzione principale di test"""
     print("="*60)
@@ -174,7 +198,8 @@ def main():
 
     try:
         if (test_addetto() and test_turno() and test_manager()
-                and test_ferie_rispettate() and test_ore_minime_settimanali()):
+                and test_ferie_rispettate() and test_ore_minime_settimanali()
+                and test_festivita()):
             print("\n" + "="*60)
             print("   TUTTI I TEST COMPLETATI CON SUCCESSO ✓".center(60))
             print("="*60)

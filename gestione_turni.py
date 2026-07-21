@@ -378,8 +378,11 @@ class TurnoManager:
             turni_richiesti_nomi = self.turni_richiesti_per_giorno.get(giorno_settimana, [])
 
             # Se non ci sono turni richiesti configurati, usa tutti i turni disponibili
+            # ordinati per coprire l'intera giornata: con più turni che addetti,
+            # l'ordine di inserimento lascerebbe scoperte intere fasce orarie
+            # (es. tutti in mattina e nessuno al pomeriggio)
             if not turni_richiesti_nomi:
-                turni_da_assegnare = self.turni
+                turni_da_assegnare = self._ordina_turni_per_copertura(self.turni)
             else:
                 # Filtra solo i turni richiesti
                 turni_da_assegnare = [t for t in self.turni if t.nome in turni_richiesti_nomi]
@@ -418,6 +421,7 @@ class TurnoManager:
         # ore_contratto è un minimo SETTIMANALE: il controllo va fatto
         # settimana per settimana, non sul totale del mese
         settimane = self.get_settimane_mese()
+        turni_per_copertura = self._ordina_turni_per_copertura(self.turni)
 
         for addetto in self.addetti:
             for num_settimana, giorni_settimana in settimane.items():
@@ -435,8 +439,14 @@ class TurnoManager:
 
                     # Se l'addetto può lavorare questo giorno e non ha già turni
                     if addetto.puo_lavorare(data) and data not in addetto.turni_assegnati:
+                        # Preferisce le fasce orarie ancora scoperte quel giorno,
+                        # per non concentrare le ore aggiuntive tutte in mattinata
+                        gia_coperti = {t.nome for t in self.pianificazione[data].values()}
+                        candidati = ([t for t in turni_per_copertura if t.nome not in gia_coperti]
+                                     + [t for t in turni_per_copertura if t.nome in gia_coperti])
+
                         # Trova un turno che può fare senza superare il massimo
-                        for turno in self.turni:
+                        for turno in candidati:
                             if addetto.puo_aggiungere_ore_settimana(num_settimana, turno.ore):
                                 # Assegna il turno
                                 self.pianificazione[data][addetto.nome] = turno
@@ -453,6 +463,49 @@ class TurnoManager:
                           f"nella settimana {num_settimana}: assegnate {addetto.get_ore_settimana(num_settimana):.0f}h")
 
         return True
+
+    def _ordina_turni_per_copertura(self, turni: List[Turno]) -> List[Turno]:
+        """
+        Ordina i turni privilegiando la copertura dell'intera giornata:
+        prima un insieme minimo di turni che copre dall'apertura alla chiusura
+        (selezione greedy sugli intervalli orari), poi i rimanenti per ora di inizio.
+        """
+        if not turni:
+            return []
+
+        def intervallo(turno: Turno):
+            h_i, m_i = map(int, turno.ora_inizio.split(':'))
+            h_f, m_f = map(int, turno.ora_fine.split(':'))
+            inizio = h_i * 60 + m_i
+            fine = h_f * 60 + m_f
+            if fine < inizio:
+                fine += 24 * 60  # turno oltre la mezzanotte
+            return inizio, fine
+
+        rimanenti = sorted(turni, key=lambda t: intervallo(t))
+        fine_giornata = max(intervallo(t)[1] for t in turni)
+
+        copertura = []
+        fine_corrente = intervallo(rimanenti[0])[0]  # apertura
+
+        while rimanenti and fine_corrente < fine_giornata:
+            # Turni che iniziano prima della fine della copertura attuale
+            candidati = [t for t in rimanenti if intervallo(t)[0] <= fine_corrente]
+
+            if not candidati:
+                # Buco orario non copribile: riparte dal prossimo turno disponibile
+                fine_corrente = intervallo(rimanenti[0])[0]
+                continue
+
+            migliore = max(candidati, key=lambda t: intervallo(t)[1])
+            if intervallo(migliore)[1] <= fine_corrente:
+                break  # nessun turno estende la copertura
+
+            copertura.append(migliore)
+            rimanenti.remove(migliore)
+            fine_corrente = intervallo(migliore)[1]
+
+        return copertura + rimanenti
 
     def _settimana_completa_nel_mese(self, data: datetime) -> bool:
         """Verifica se la settimana (lun-dom) che contiene la data è interamente nel mese corrente"""

@@ -166,6 +166,63 @@ def test_ore_minime_settimanali():
     return True
 
 
+def test_copertura_giornata_senza_configurazione():
+    """Nei giorni senza turni richiesti configurati va coperta tutta la giornata,
+    non solo la mattina (scenario reale: domenica con 3 addetti e 9 turni)"""
+    print("\n=== TEST COPERTURA GIORNATA ===")
+
+    manager = TurnoManager()
+    manager.mese = 12
+    manager.anno = 2025
+
+    addetto1 = Addetto("Simona", 38, 45, True)
+    addetto1.aggiungi_giorno_riposo(4)
+    addetto2 = Addetto("Matte", 20, 38, True)
+    addetto2.aggiungi_giorno_riposo(0)
+    addetto3 = Addetto("Melissa", 20, 38, True)
+    addetto3.aggiungi_giorno_riposo(2)
+    for a in (addetto1, addetto2, addetto3):
+        manager.aggiungi_addetto(a)
+
+    # Turni mattina/pomeriggio/intermedi nell'ordine di inserimento reale:
+    # prima del fix la domenica prendeva i primi 3 (tutti di mattina)
+    for nome, inizio, fine in [
+        ("Matt1", "08:00", "14:00"), ("Matt2", "08:00", "13:00"), ("Matt3", "08:00", "14:30"),
+        ("Pom1", "17:00", "21:00"), ("Pom2", "14:30", "21:00"), ("Pom3", "14:00", "21:00"),
+        ("Int1", "14:00", "19:00"), ("Int2", "15:00", "19:00"), ("Int3", "14:00", "18:30"),
+    ]:
+        manager.aggiungi_turno(Turno(nome, inizio, fine))
+
+    # Solo i giorni feriali sono configurati, la domenica no (come nei dati reali)
+    manager.turni_richiesti_per_giorno = {
+        0: ["Matt1", "Pom1"], 1: ["Matt2", "Pom2"], 2: ["Matt1", "Int1"],
+        3: ["Matt3", "Pom3"], 4: ["Matt2", "Pom1"], 5: ["Matt1", "Pom2", "Int2"],
+        6: [],
+    }
+
+    assert manager.pianifica_turni(), "La pianificazione deve riuscire"
+
+    domeniche_con_turni = 0
+    for data in manager.get_giorni_mese():
+        if data.weekday() != 6:
+            continue
+        assegnazioni = manager.pianificazione.get(data, {})
+        if not assegnazioni:
+            continue
+        domeniche_con_turni += 1
+        inizi = {t.ora_inizio for t in assegnazioni.values()}
+        fini = {t.ora_fine for t in assegnazioni.values()}
+        assert "08:00" in inizi, \
+            f"Domenica {data.strftime('%d/%m')}: nessun turno di apertura (08:00), turni: {sorted(inizi)}"
+        assert "21:00" in fini, \
+            f"Domenica {data.strftime('%d/%m')}: nessun turno di chiusura (21:00), turni assegnati solo fino alle {max(fini)}"
+
+    assert domeniche_con_turni > 0, "Almeno una domenica deve avere turni assegnati"
+
+    print(f"✓ Le {domeniche_con_turni} domeniche pianificate coprono apertura e chiusura")
+    return True
+
+
 def test_festivita():
     """Le festività nazionali italiane, incluse Pasqua e Pasquetta mobili, sono riconosciute"""
     print("\n=== TEST FESTIVITÀ ===")
@@ -199,7 +256,7 @@ def main():
     try:
         if (test_addetto() and test_turno() and test_manager()
                 and test_ferie_rispettate() and test_ore_minime_settimanali()
-                and test_festivita()):
+                and test_festivita() and test_copertura_giornata_senza_configurazione()):
             print("\n" + "="*60)
             print("   TUTTI I TEST COMPLETATI CON SUCCESSO ✓".center(60))
             print("="*60)
